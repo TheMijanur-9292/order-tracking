@@ -81,6 +81,21 @@
     );
   });
 
+  function maskPhoneNumber(p) {
+    if (!p) return '';
+    const str = String(p).trim();
+    if (str.startsWith('+91-')) {
+      const rest = str.substring(4);
+      if (rest.length >= 2) return `+91-${rest.slice(0, 2)}xxxxxx`;
+    } else if (str.startsWith('+91')) {
+      const rest = str.substring(3);
+      if (rest.length >= 2) return `+91-${rest.slice(0, 2)}xxxxxx`;
+    } else if (str.length >= 2) {
+      return `${str.slice(0, 2)}xxxxxx`;
+    }
+    return 'xxxxxx';
+  }
+
   function copyText(fieldKey, text) {
     if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
@@ -293,9 +308,9 @@
           <!-- PHONE NUMBER WITH COPY BUTTON -->
           <div class="rec-row" style="margin-top:0.3rem;">
             <span class="rec-phone" style="font-size:0.9rem;">
-              <i class="fa-solid fa-phone" style="color:var(--emerald-accent)"></i> {rec.phone || 'N/A'}
+              <i class="fa-solid fa-phone" style="color:var(--emerald-accent)"></i> {$isAdmin ? (rec.phone || 'N/A') : maskPhoneNumber(rec.phone)}
             </span>
-            {#if rec.phone}
+            {#if $isAdmin && rec.phone}
               <button 
                 class="btn-copy-inline" 
                 on:click={() => copyText(`rec-phone-${rec.id}`, rec.phone)} 
@@ -315,17 +330,19 @@
             <span class="rec-address" style="font-size:0.85rem;">
               <i class="fa-solid fa-location-dot" style="color:var(--swiggy-color)"></i> {rec.address}
             </span>
-            <button 
-              class="btn-copy-inline" 
-              on:click={() => copyText(`rec-addr-${rec.id}`, rec.address)} 
-              title="Copy Address"
-            >
-              {#if copiedFieldId === `rec-addr-${rec.id}`}
-                <i class="fa-solid fa-check" style="color:var(--emerald-accent)"></i>
-              {:else}
-                <i class="fa-regular fa-copy"></i>
-              {/if}
-            </button>
+            {#if $isAdmin}
+              <button 
+                class="btn-copy-inline" 
+                on:click={() => copyText(`rec-addr-${rec.id}`, rec.address)} 
+                title="Copy Address"
+              >
+                {#if copiedFieldId === `rec-addr-${rec.id}`}
+                  <i class="fa-solid fa-check" style="color:var(--emerald-accent)"></i>
+                {:else}
+                  <i class="fa-regular fa-copy"></i>
+                {/if}
+              </button>
+            {/if}
           </div>
         </div>
       {/each}

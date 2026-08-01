@@ -319,6 +319,25 @@
     }
   }
 
+  function maskPhoneNumber(phone) {
+    if (!phone) return '';
+    const str = String(phone).trim();
+    if (str.startsWith('+91-')) {
+      const rest = str.substring(4);
+      if (rest.length >= 2) {
+        return `+91-${rest.slice(0, 2)}xxxxxx`;
+      }
+    } else if (str.startsWith('+91')) {
+      const rest = str.substring(3);
+      if (rest.length >= 2) {
+        return `+91-${rest.slice(0, 2)}xxxxxx`;
+      }
+    } else if (str.length >= 2) {
+      return `${str.slice(0, 2)}xxxxxx`;
+    }
+    return 'xxxxxx';
+  }
+
   // HELPER TO TRIGGER CUSTOM CONFIRM MODAL
   function requestConfirmation(title, message, actionFn) {
     confirmTitle = title;
@@ -990,15 +1009,17 @@
                       <i class="fa-solid fa-user-check"></i> {r.receiver_name}
                     </span>
                     {#if r.receiver_phone}
-                      <span style="font-size:0.78rem; font-weight:600; color:var(--emerald-accent);">{r.receiver_phone}</span>
+                      <span style="font-size:0.78rem; font-weight:600; color:var(--emerald-accent);">{$isAdmin ? r.receiver_phone : maskPhoneNumber(r.receiver_phone)}</span>
                     {/if}
                   </div>
                   {#if r.receiver_address}
                     <div style="display:flex; align-items:center; gap:0.4rem; margin-top:0.2rem; font-size:0.78rem; color:var(--text-muted);">
                       <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1;">{r.receiver_address}</span>
-                      <button class="btn-copy-inline" on:click={() => copyText(`rrec-${r.id}`, r.receiver_address)} title="Copy Receiver Address">
-                        {#if copiedFieldId === `rrec-${r.id}`}<i class="fa-solid fa-check" style="color:var(--emerald-accent)"></i>{:else}<i class="fa-regular fa-copy"></i>{/if}
-                      </button>
+                      {#if $isAdmin}
+                        <button class="btn-copy-inline" on:click={() => copyText(`rrec-${r.id}`, r.receiver_address)} title="Copy Receiver Address">
+                          {#if copiedFieldId === `rrec-${r.id}`}<i class="fa-solid fa-check" style="color:var(--emerald-accent)"></i>{:else}<i class="fa-regular fa-copy"></i>{/if}
+                        </button>
+                      {/if}
                     </div>
                   {/if}
                 </div>
