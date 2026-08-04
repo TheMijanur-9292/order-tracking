@@ -22,14 +22,14 @@ export async function POST({ request, cookies }) {
       return json({ success: false, error: 'Invalid email or password' }, { status: 401 });
     }
 
-    // Set secure admin session cookie
+    // Set permanent admin session cookie (10 years)
     const sessionToken = Buffer.from(JSON.stringify({ email: user.email, role: user.role, time: Date.now() })).toString('base64');
     cookies.set('zomswi_admin_session', sessionToken, {
       path: '/',
       httpOnly: true,
       sameSite: 'lax',
       secure: false, // works on localhost HTTP
-      maxAge: 60 * 60 * 24 * 7 // 7 days
+      maxAge: 60 * 60 * 24 * 365 * 10 // 10 years (Permanent until manual logout)
     });
 
     return json({

@@ -74,7 +74,10 @@ export async function GET({ url }) {
 
     sql += ` ORDER BY h.ordered_at DESC NULLS LAST, h.created_at DESC`;
 
-    const history = await query(sql, params);
+    const [history, availableMonthsRes] = await Promise.all([
+      query(sql, params),
+      query(`SELECT DISTINCT month_year FROM order_history ORDER BY month_year DESC`)
+    ]);
 
     // Calculate aggregated summary statistics
     const totalOrders = history.length;
@@ -88,10 +91,6 @@ export async function GET({ url }) {
         .map(item => item.receiver_name.trim())
     ).size;
 
-    // Fetch all available months from order_history database table for filter dropdown
-    const availableMonthsRes = await query(`
-      SELECT DISTINCT month_year FROM order_history ORDER BY month_year DESC
-    `);
     const availableMonths = availableMonthsRes.map(m => m.month_year);
 
     return json({

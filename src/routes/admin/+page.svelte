@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
-  import { userStore, isAdmin, isLoginModalOpen, logoutUser } from '$lib/authStore.js';
+  import { userStore, isAdmin, isLoginModalOpen, authLoading, logoutUser } from '$lib/authStore.js';
+
 
   // Active Admin Sidebar Tab: 'overview' | 'restaurants' | 'zones' | 'receivers' | 'timeslots' | 'history' | 'import'
   let activeTab = 'overview';
@@ -127,12 +128,12 @@
     const savedTheme = localStorage.getItem('theme') || 'light';
     applyTheme(savedTheme);
     loadAllData();
-
-    if (!$isAdmin) {
-      isLoginModalOpen.set(true);
-      showToast('Admin login required to perform write actions', 'error');
-    }
   });
+
+  $: if (!$authLoading && !$isAdmin) {
+    isLoginModalOpen.set(true);
+    showToast('Admin login required to perform write actions', 'error');
+  }
 
   async function loadAllData() {
     isLoadingAllData = true;

@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#090d16"/>
+    </linearGradient>
+
+    <!-- Brand Flame/Glow Gradient: Swiggy Orange to Zomato Red -->
+    <linearGradient id="brandGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FC8019"/>
+      <stop offset="50%" stop-color="#E23744"/>
+      <stop offset="100%" stop-color="#CB202D"/>
+    </linearGradient>
+
+    <!-- Emerald Glow Gradient -->
+    <linearGradient id="emeraldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10B981"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+
+    <!-- Soft Drop Shadow Filter -->
+    <filter id="glowFilter" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="16" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#CB202D" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- Base App Icon Rounded Box -->
+  <rect x="32" y="32" width="448" height="448" rx="100" fill="url(#bgGrad)" stroke="rgba(255,255,255,0.08)" stroke-width="4"/>
+
+  <!-- Outer Neon Radial Glow -->
+  <circle cx="256" cy="230" r="140" fill="url(#brandGrad)" opacity="0.18" filter="url(#glowFilter)"/>
+
+  <!-- Outer Ring Badge -->
+  <circle cx="256" cy="225" r="125" fill="none" stroke="url(#brandGrad)" stroke-width="8" opacity="0.4" stroke-dasharray="12 8"/>
+
+  <!-- Main Brand Gradient Circle -->
+  <circle cx="256" cy="225" r="105" fill="url(#brandGrad)" filter="url(#shadow)"/>
+
+  <!-- Cutlery Symbol (Fork & Spoon + Location Pin fusion) -->
+  <g transform="translate(196, 160) scale(1.2)" fill="#FFFFFF">
+    <!-- Fork left -->
+    <path d="M 20,10 L 20,40 C 20,52 30,55 35,55 L 35,90 C 35,93 37,95 40,95 C 43,95 45,93 45,90 L 45,55 C 50,55 60,52 60,40 L 60,10 C 60,8 58,7 56,7 C 54,7 53,8 53,10 L 53,32 L 44,32 L 44,10 C 44,8 42,7 40,7 C 38,7 36,8 36,10 L 36,32 L 27,32 L 27,10 C 27,8 25,7 23,7 C 21,7 20,8 20,10 Z"/>
+
+    <!-- Checkmark Badge Overlay -->
+    <circle cx="75" cy="75" r="22" fill="url(#emeraldGrad)"/>
+    <path d="M 66,75 L 72,81 L 84,68" fill="none" stroke="#FFFFFF" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Typography Below -->
+  <text x="256" y="395" text-anchor="middle" fill="#FFFFFF" font-family="'Outfit', sans-serif" font-weight="800" font-size="38" letter-spacing="2">ZOMSWI</text>
+  <text x="256" y="425" text-anchor="middle" fill="#94A3B8" font-family="'Plus Jakarta Sans', sans-serif" font-weight="600" font-size="16" letter-spacing="1">KOLKATA ORDER TRACKER</text>
+</svg>

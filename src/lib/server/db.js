@@ -8,7 +8,8 @@ import crypto from 'crypto';
 dotenv.config();
 
 export function hashPassword(password) {
-  return crypto.pbkdf2Sync(password, 'zomswi_salt_2026', 1000, 64, 'sha512').toString('hex');
+  const salt = process.env.AUTH_SALT || 'zomswi_salt_2026';
+  return crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
 }
 
 export function verifyPassword(password, hash) {
@@ -31,8 +32,45 @@ if (databaseUrl && (databaseUrl.startsWith('postgres://') || databaseUrl.startsW
   isPg = true;
   pgPool = new pg.Pool({
     connectionString: databaseUrl,
-    ssl: { rejectUnauthorized: false }
+    ssl: { rejectUnauthorized: false },
+    max: 25,
+    idleTimeoutMillis: 300000,
+    connectionTimeoutMillis: 5000
   });
+  
+  // Handle unexpected connection errors on idle clients to prevent process crash
+  pgPool.on('error', (err) => {
+    console.error('Unexpected error on idle pg client:', err);
+  });
+}
+
+// In-Memory Micro-Cache for Instant Sub-10ms Response Times
+const cacheMap = new Map();
+
+export function getCachedData(key) {
+  const item = cacheMap.get(key);
+  if (!item) return null;
+  if (Date.now() > item.expiry) {
+    cacheMap.delete(key);
+    return null;
+  }
+  return item.data;
+}
+
+export function setCachedData(key, data, ttlMs = 15000) {
+  cacheMap.set(key, { data, expiry: Date.now() + ttlMs });
+}
+
+export function invalidateCache(pattern) {
+  if (!pattern) {
+    cacheMap.clear();
+    return;
+  }
+  for (const k of cacheMap.keys()) {
+    if (k.includes(pattern)) {
+      cacheMap.delete(k);
+    }
+  }
 }
 
 export async function initDb() {
@@ -93,7 +131,7 @@ export async function initDb() {
           receiver_name VARCHAR(255),
           receiver_address TEXT,
           receiver_phone VARCHAR(50),
-          ordered_at TIMESTAMP,
+          ordered_at TIMESTAMPTZ,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           UNIQUE(restaurant_id, month_year)
         );
@@ -120,7 +158,7 @@ export async function initDb() {
           receiver_address TEXT,
           receiver_phone VARCHAR(50),
           notes TEXT,
-          ordered_at TIMESTAMP,
+          ordered_at TIMESTAMPTZ,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -137,12 +175,19 @@ export async function initDb() {
         CREATE INDEX IF NOT EXISTS idx_order_history_month ON order_history(month_year);
       `);
 
-      // Auto-seed admin user (mijanur@gmail.com / Mijanur@9735)
-      const userCheck = await client.query('SELECT * FROM users WHERE email = $1', ['mijanur@gmail.com']);
-      if (userCheck.rows.length === 0) {
-        const hash = hashPassword('Mijanur@9735');
-        await client.query('INSERT INTO users (email, password_hash, role) VALUES ($1, $2, $3)', ['mijanur@gmail.com', hash, 'admin']);
-        console.log('👤 Admin user seeded: mijanur@gmail.com');
+      // Auto-seed admin user from environment variables (ADMIN_EMAIL & ADMIN_PASSWORD)
+      const adminEmail = process.env.ADMIN_EMAIL;
+      const adminPassword = process.env.ADMIN_PASSWORD;
+
+      if (adminEmail && adminPassword) {
+        const userCheck = await client.query('SELECT * FROM users WHERE email = $1', [adminEmail]);
+        if (userCheck.rows.length === 0) {
+          const hash = hashPassword(adminPassword);
+          await client.query('INSERT INTO users (email, password_hash, role) VALUES ($1, $2, $3)', [adminEmail, hash, 'admin']);
+          console.log(`👤 Admin user seeded: ${adminEmail}`);
+        }
+      } else {
+        console.warn('⚠️ ADMIN_EMAIL or ADMIN_PASSWORD not configured in .env. Skipping admin seeding.');
       }
 
       // Auto-seed default 5 time slots if empty
@@ -228,8 +273,37 @@ export async function initDb() {
         FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        role TEXT DEFAULT 'admin',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS order_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER,
+        restaurant_id INTEGER,
+        restaurant_name TEXT,
+        zone_name TEXT,
+        month_year TEXT NOT NULL,
+        status TEXT NOT NULL,
+        platform_used TEXT,
+        time_slot TEXT,
+        receiver_id INTEGER,
+        receiver_name TEXT,
+        receiver_address TEXT,
+        receiver_phone TEXT,
+        notes TEXT,
+        ordered_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE CASCADE
+      );
+
       CREATE INDEX IF NOT EXISTS idx_restaurants_zone ON restaurants(zone_id);
       CREATE INDEX IF NOT EXISTS idx_orders_rest_month ON orders(restaurant_id, month_year);
+      CREATE INDEX IF NOT EXISTS idx_order_history_month ON order_history(month_year);
     `);
 
     try {
@@ -263,6 +337,21 @@ export async function initDb() {
           ('Dinner', '07:00 PM', '11:00 PM', 'fa-moon', '#8b5cf6', 4),
           ('Late Night Dinner', '11:00 PM', '06:00 AM', 'fa-star-and-crescent', '#ec4899', 5)
       `);
+    }
+
+    // Auto-seed admin user from environment variables (ADMIN_EMAIL & ADMIN_PASSWORD) in SQLite
+    const adminEmail = process.env.ADMIN_EMAIL;
+    const adminPassword = process.env.ADMIN_PASSWORD;
+
+    if (adminEmail && adminPassword) {
+      const userCheck = await sqliteDb.get('SELECT * FROM users WHERE email = ?', [adminEmail]);
+      if (!userCheck) {
+        const hash = hashPassword(adminPassword);
+        await sqliteDb.run('INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)', [adminEmail, hash, 'admin']);
+        console.log(`👤 Admin user seeded in SQLite: ${adminEmail}`);
+      }
+    } else {
+      console.warn('⚠️ ADMIN_EMAIL or ADMIN_PASSWORD not configured in .env. Skipping SQLite admin seeding.');
     }
   }
 }

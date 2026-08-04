@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { query } from '$lib/server/db.js';
+import { query, getCachedData, setCachedData, invalidateCache } from '$lib/server/db.js';
 
 function getCurrentMonthYear() {
   const d = new Date();
@@ -11,6 +11,11 @@ function getCurrentMonthYear() {
 export async function GET({ url }) {
   try {
     const monthYear = url.searchParams.get('month_year') || getCurrentMonthYear();
+    const cacheKey = `zones_${monthYear}`;
+
+    const cached = getCachedData(cacheKey);
+    if (cached) return json(cached);
+
     const zones = await query(`
       SELECT z.*, 
         COUNT(DISTINCT r.id) as total_restaurants,
@@ -21,7 +26,10 @@ export async function GET({ url }) {
       GROUP BY z.id, z.name, z.description, z.created_at
       ORDER BY z.id ASC
     `, [monthYear]);
-    return json({ success: true, zones });
+
+    const resPayload = { success: true, zones };
+    setCachedData(cacheKey, resPayload, 15000);
+    return json(resPayload);
   } catch (err) {
     return json({ success: false, error: err.message }, { status: 500 });
   }
@@ -42,6 +50,9 @@ export async function POST({ request, cookies }) {
       'INSERT INTO zones (name, description) VALUES (?, ?)',
       [name.trim(), description || '']
     );
+
+    invalidateCache();
+
     return json({ success: true, id: result[0]?.id, name: name.trim() });
   } catch (err) {
     return json({ success: false, error: err.message }, { status: 500 });

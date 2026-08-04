@@ -1,10 +1,15 @@
 import { json } from '@sveltejs/kit';
-import { query } from '$lib/server/db.js';
+import { query, getCachedData, setCachedData, invalidateCache } from '$lib/server/db.js';
 
 export async function GET() {
   try {
+    const cached = getCachedData('time_slots');
+    if (cached) return json(cached);
+
     const slots = await query('SELECT * FROM time_slots ORDER BY display_order ASC, id ASC');
-    return json({ success: true, time_slots: slots });
+    const resPayload = { success: true, time_slots: slots };
+    setCachedData('time_slots', resPayload, 60000);
+    return json(resPayload);
   } catch (err) {
     return json({ success: false, error: err.message }, { status: 500 });
   }
@@ -34,6 +39,8 @@ export async function POST({ request, cookies }) {
         display_order || 1
       ]
     );
+
+    invalidateCache('time_slots');
 
     return json({ success: true, id: result[0]?.id });
   } catch (err) {

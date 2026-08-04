@@ -1,12 +1,17 @@
 import { json } from '@sveltejs/kit';
-import { query } from '$lib/server/db.js';
+import { query, getCachedData, setCachedData, invalidateCache } from '$lib/server/db.js';
 
 export async function GET() {
   try {
+    const cached = getCachedData('receivers');
+    if (cached) return json(cached);
+
     const receivers = await query(`
       SELECT * FROM order_receiver ORDER BY id DESC
     `);
-    return json({ success: true, receivers });
+    const resPayload = { success: true, receivers };
+    setCachedData('receivers', resPayload, 30000);
+    return json(resPayload);
   } catch (err) {
     console.error('Error fetching receivers:', err);
     return json({ success: false, error: err.message }, { status: 500 });
@@ -34,6 +39,8 @@ export async function POST({ request, cookies }) {
       `INSERT INTO order_receiver (name, address, phone) VALUES (?, ?, ?)`,
       [name.trim(), address.trim(), (phone || '').trim()]
     );
+
+    invalidateCache('receivers');
 
     return json({ success: true, id: res[0]?.id, message: 'Receiver added successfully' });
   } catch (err) {

@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
-import { query } from '$lib/server/db.js';
+import { query, invalidateCache } from '$lib/server/db.js';
+import { _broadcastLiveUpdate } from '../live-updates/+server.js';
 
 function getCurrentMonthYear() {
   const d = new Date();
@@ -37,18 +38,50 @@ export async function POST({ request, cookies }) {
 
     let newStatus = 'Ordered';
 
-    if (action === 'reset') {
-      newStatus = 'Pending';
-    } else if (existing.length > 0 && existing[0].status === 'Ordered' && !receiver_id && action === 'toggle') {
-      newStatus = 'Pending';
+    // Handle Revert / Reset action: Delete order & history completely from database
+    const isReset = action === 'reset' || (existing.length > 0 && existing[0].status === 'Ordered' && !receiver_id && action === 'toggle');
+
+    if (isReset) {
+      await query('DELETE FROM orders WHERE restaurant_id = ? AND month_year = ?', [restaurant_id, targetMonthYear]);
+      await query('DELETE FROM order_history WHERE restaurant_id = ? AND month_year = ?', [restaurant_id, targetMonthYear]);
+      _broadcastLiveUpdate();
+
+      return json({ 
+        success: true, 
+        status: 'Pending', 
+        month_year: targetMonthYear,
+        time_slot: null,
+        receiver_name: null
+      });
     }
 
     let orderId = existing.length > 0 ? existing[0].id : null;
 
     if (existing.length > 0) {
+      const currentOrder = existing[0];
+      const hasChanged = 
+        currentOrder.status !== 'Ordered' ||
+        (platform_used !== undefined && currentOrder.platform_used !== (platform_used || 'Swiggy/Zomato')) ||
+        (time_slot !== undefined && currentOrder.time_slot !== (time_slot || 'Lunch')) ||
+        (notes !== undefined && (currentOrder.notes || '') !== (notes || '')) ||
+        (receiver_id !== undefined && (currentOrder.receiver_id || null) !== (receiver_id || null)) ||
+        (receiver_name !== undefined && (currentOrder.receiver_name || null) !== (receiver_name || null)) ||
+        (receiver_address !== undefined && (currentOrder.receiver_address || null) !== (receiver_address || null)) ||
+        (receiver_phone !== undefined && (currentOrder.receiver_phone || null) !== (receiver_phone || null));
+
+      if (!hasChanged) {
+        return json({ 
+          success: true, 
+          status: 'Ordered', 
+          month_year: targetMonthYear,
+          time_slot: currentOrder.time_slot || 'Lunch',
+          receiver_name: currentOrder.receiver_name || null
+        });
+      }
+
       await query(
         `UPDATE orders 
-         SET status = ?, 
+         SET status = 'Ordered', 
              platform_used = ?, 
              time_slot = ?,
              notes = ?, 
@@ -59,15 +92,14 @@ export async function POST({ request, cookies }) {
              ordered_at = ?
          WHERE restaurant_id = ? AND month_year = ?`,
         [
-          newStatus, 
           platform_used || existing[0].platform_used || 'Swiggy/Zomato', 
-          newStatus === 'Ordered' ? (time_slot || existing[0].time_slot || 'Lunch') : null,
+          time_slot || existing[0].time_slot || 'Lunch',
           notes || '', 
-          newStatus === 'Ordered' ? (receiver_id || existing[0].receiver_id || null) : null,
-          newStatus === 'Ordered' ? (receiver_name || existing[0].receiver_name || null) : null,
-          newStatus === 'Ordered' ? (receiver_address || existing[0].receiver_address || null) : null,
-          newStatus === 'Ordered' ? (receiver_phone || existing[0].receiver_phone || null) : null,
-          newStatus === 'Ordered' ? (existing[0].ordered_at || new Date().toISOString()) : null,
+          receiver_id || existing[0].receiver_id || null,
+          receiver_name || existing[0].receiver_name || null,
+          receiver_address || existing[0].receiver_address || null,
+          receiver_phone || existing[0].receiver_phone || null,
+          new Date().toISOString(),
           restaurant_id, 
           targetMonthYear
         ]
@@ -108,34 +140,35 @@ export async function POST({ request, cookies }) {
           order_id, restaurant_id, restaurant_name, zone_name, month_year,
           status, platform_used, time_slot, receiver_id, receiver_name,
           receiver_address, receiver_phone, notes, ordered_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, 'Ordered', ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           orderId,
           restaurant_id,
           restInfo[0]?.restaurant_name || 'Restaurant',
           restInfo[0]?.zone_name || 'Kolkata',
           targetMonthYear,
-          newStatus,
           platform_used || 'Swiggy/Zomato',
-          newStatus === 'Ordered' ? (time_slot || 'Lunch') : null,
-          newStatus === 'Ordered' ? (receiver_id || null) : null,
-          newStatus === 'Ordered' ? (receiver_name || null) : null,
-          newStatus === 'Ordered' ? (receiver_address || null) : null,
-          newStatus === 'Ordered' ? (receiver_phone || null) : null,
+          time_slot || 'Lunch',
+          receiver_id || null,
+          receiver_name || null,
+          receiver_address || null,
+          receiver_phone || null,
           notes || '',
-          newStatus === 'Ordered' ? new Date().toISOString() : null
+          new Date().toISOString()
         ]
       );
     } catch (histErr) {
       console.error('Failed to write to order_history:', histErr);
     }
 
+    _broadcastLiveUpdate();
+
     return json({ 
       success: true, 
-      status: newStatus, 
+      status: 'Ordered', 
       month_year: targetMonthYear,
-      time_slot: newStatus === 'Ordered' ? time_slot : null,
-      receiver_name: newStatus === 'Ordered' ? receiver_name : null
+      time_slot: time_slot || 'Lunch',
+      receiver_name: receiver_name || null
     });
   } catch (err) {
     return json({ success: false, error: err.message }, { status: 500 });

@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import * as xlsx from 'xlsx';
-import { query } from '$lib/server/db.js';
+import { query, invalidateCache } from '$lib/server/db.js';
 
 export async function POST({ request, cookies }) {
   const sessionToken = cookies.get('zomswi_admin_session');
@@ -80,6 +80,8 @@ export async function POST({ request, cookies }) {
 
       insertedCount++;
     }
+
+    invalidateCache();
 
     return json({
       success: true,

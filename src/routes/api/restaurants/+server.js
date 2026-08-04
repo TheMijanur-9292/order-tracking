@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { query } from '$lib/server/db.js';
+import { query, getCachedData, setCachedData, invalidateCache } from '$lib/server/db.js';
 
 function getCurrentMonthYear() {
   const d = new Date();
@@ -11,10 +11,14 @@ function getCurrentMonthYear() {
 export async function GET({ url }) {
   try {
     const monthYear = url.searchParams.get('month_year') || getCurrentMonthYear();
-    const zone_id = url.searchParams.get('zone_id');
-    const search = url.searchParams.get('search');
-    const platform = url.searchParams.get('platform');
-    const status = url.searchParams.get('status');
+    const zone_id = url.searchParams.get('zone_id') || 'all';
+    const search = (url.searchParams.get('search') || '').trim();
+    const platform = url.searchParams.get('platform') || 'all';
+    const status = url.searchParams.get('status') || 'all';
+
+    const cacheKey = `rests_${monthYear}_${zone_id}_${platform}_${status}_${search}`;
+    const cached = getCachedData(cacheKey);
+    if (cached) return json(cached);
 
     let sql = `
       SELECT 
@@ -41,9 +45,9 @@ export async function GET({ url }) {
       params.push(zone_id);
     }
 
-    if (search && search.trim()) {
+    if (search) {
       sql += ` AND (r.name LIKE ? OR r.address LIKE ? OR r.distance LIKE ?)`;
-      const term = `%${search.trim()}%`;
+      const term = `%${search}%`;
       params.push(term, term, term);
     }
 
@@ -63,7 +67,9 @@ export async function GET({ url }) {
     sql += ` ORDER BY r.is_seeded DESC, r.name ASC`;
 
     const restaurants = await query(sql, params);
-    return json({ success: true, restaurants });
+    const resPayload = { success: true, restaurants };
+    setCachedData(cacheKey, resPayload, 15000);
+    return json(resPayload);
   } catch (err) {
     return json({ success: false, error: err.message }, { status: 500 });
   }
@@ -85,6 +91,9 @@ export async function POST({ request, cookies }) {
        VALUES (?, ?, ?, ?, ?, ?, ?, false)`,
       [zone_id, name.trim(), platform || 'Both', distance || '2-3 km', address || '', swiggy_url || '', zomato_url || '']
     );
+
+    invalidateCache();
+
     return json({ success: true, id: result[0]?.id });
   } catch (err) {
     return json({ success: false, error: err.message }, { status: 500 });

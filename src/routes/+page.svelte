@@ -40,8 +40,22 @@
   // Loading State
   let isLoadingData = true;
 
-  // Custom Zone Dropdown Open State
+  // Custom Dropdowns Open States
   let isZoneDropdownOpen = false;
+  let isDistanceDropdownOpen = false;
+  let isStatusDropdownOpen = false;
+
+  function selectDistance(dist) {
+    distanceFilter = dist;
+    isDistanceDropdownOpen = false;
+    currentPage = 1;
+  }
+
+  function selectStatus(st) {
+    statusFilter = st;
+    isStatusDropdownOpen = false;
+    currentPage = 1;
+  }
 
   // Stats
   let totalZones = 0;
@@ -68,6 +82,7 @@
   let selectedRestForOrder = null;
   let selectedTimeSlot = null;
   let receiverSearchQuery = '';
+  let isAssigningOrder = false;
 
   // QUICK ADD RECEIVER INSIDE PICKER
   let showQuickAddRec = false;
@@ -80,6 +95,7 @@
   let confirmTitle = '';
   let confirmMessage = '';
   let pendingActionFn = null;
+  let isExecutingConfirm = false;
 
   // Form State - Restaurants
   let editRestId = null;
@@ -135,6 +151,14 @@
     liveDateStr = now.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
   }
 
+  async function silentRefresh() {
+    try {
+      await Promise.all([fetchZones(), fetchStats(), fetchRestaurants()]);
+    } catch (e) {
+      console.error('Background sync error:', e);
+    }
+  }
+
   onMount(() => {
     const savedTheme = localStorage.getItem('theme') || 'light';
     applyTheme(savedTheme);
@@ -143,15 +167,42 @@
     updateLiveClock();
     const clockInterval = setInterval(updateLiveClock, 1000);
 
-    // Close zone dropdown on outside click
+    // Feature 1: Real-time Auto-Sync EventSource
+    let sse;
+    if (typeof window !== 'undefined' && 'EventSource' in window) {
+      try {
+        sse = new EventSource('/api/live-updates');
+        sse.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+            if (payload.type === 'ORDER_UPDATED') {
+              silentRefresh();
+            }
+          } catch (err) {}
+        };
+      } catch (e) {}
+    }
+
+    // Fallback Background Poll every 10 seconds when tab is active
+    const pollInterval = setInterval(() => {
+      if (document.visibilityState === 'visible' && !isLoadingData) {
+        silentRefresh();
+      }
+    }, 10000);
+
+    // Close all custom dropdowns on outside click
     const handleOutsideClick = (e) => {
       if (!e.target.closest('.custom-zone-dropdown')) {
         isZoneDropdownOpen = false;
+        isDistanceDropdownOpen = false;
+        isStatusDropdownOpen = false;
       }
     };
     window.addEventListener('click', handleOutsideClick);
     return () => {
       clearInterval(clockInterval);
+      clearInterval(pollInterval);
+      if (sse) sse.close();
       window.removeEventListener('click', handleOutsideClick);
     };
   });
@@ -347,11 +398,17 @@
   }
 
   async function executeConfirmedAction() {
-    if (pendingActionFn) {
-      await pendingActionFn();
+    if (isExecutingConfirm) return;
+    isExecutingConfirm = true;
+    try {
+      if (pendingActionFn) {
+        await pendingActionFn();
+      }
+    } finally {
+      isExecutingConfirm = false;
+      showConfirmModal = false;
+      pendingActionFn = null;
     }
-    showConfirmModal = false;
-    pendingActionFn = null;
   }
 
   // OPEN ORDER WORKFLOW MODAL (STEP 1: SELECT TIME SLOT)
@@ -383,6 +440,9 @@
       return;
     }
     if (!selectedRestForOrder) return;
+    if (isAssigningOrder) return;
+
+    isAssigningOrder = true;
 
     try {
       const payload = {
@@ -415,6 +475,8 @@
     } catch (err) {
       console.error('Catch Error updating order status:', err);
       showToast(err?.message || 'Error updating order status', 'error');
+    } finally {
+      isAssigningOrder = false;
     }
   }
 
@@ -456,6 +518,9 @@
     if (!quickRecName.trim() || !quickRecAddress.trim()) {
       return showToast('Receiver name and address are required', 'error');
     }
+    if (isAssigningOrder) return;
+    isAssigningOrder = true;
+
     try {
       const res = await fetch('/api/receivers', {
         method: 'POST',
@@ -477,12 +542,14 @@
         };
         await fetchReceivers();
         showQuickAddRec = false;
-        confirmOrderWithReceiver(newRecObj);
+        await confirmOrderWithReceiver(newRecObj);
       } else {
         showToast(data.error || 'Failed to save receiver', 'error');
+        isAssigningOrder = false;
       }
     } catch (err) {
       showToast('Error adding receiver', 'error');
+      isAssigningOrder = false;
     }
   }
 
@@ -639,25 +706,41 @@
     }
   }
 
-  function formatTime(isoStr) {
-    if (!isoStr) return '';
+  function parseOrderDate(isoStr) {
+    if (!isoStr) return null;
+    if (typeof isoStr === 'string') {
+      let s = isoStr.trim();
+      // If DB returned UTC timestamp string without timezone suffix, normalize it to UTC ISO string
+      if (s.includes('-') && !s.endsWith('Z') && !s.includes('+')) {
+        s = s.replace(' ', 'T') + 'Z';
+      }
+      const d = new Date(s);
+      if (!isNaN(d.getTime())) return d;
+    }
     const d = new Date(isoStr);
-    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function formatTime(isoStr) {
+    const d = parseOrderDate(isoStr);
+    if (!d) return '';
+    const dateStr = d.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' });
+    const timeStr = d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true });
+    return `${dateStr}, ${timeStr}`;
   }
 
   function formatFullOrderDate(isoStr, fallbackMonthStr) {
-    if (isoStr) {
-      const d = new Date(isoStr);
-      if (!isNaN(d.getTime())) {
-        const day = d.getDate();
-        const monthFull = d.toLocaleDateString('en-US', { month: 'long' });
-        const year = d.getFullYear();
-        const weekday = d.toLocaleDateString('en-US', { weekday: 'short' });
-        const suffix = (day === 1 || day === 21 || day === 31) ? 'st' :
-                       (day === 2 || day === 22) ? 'nd' :
-                       (day === 3 || day === 23) ? 'rd' : 'th';
-        return `${day}${suffix} ${monthFull}, ${year} (${weekday})`;
-      }
+    const d = parseOrderDate(isoStr);
+    if (d) {
+      const day = parseInt(d.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata', day: 'numeric' }), 10);
+      const monthFull = d.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata', month: 'long' });
+      const year = d.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata', year: 'numeric' });
+      const weekday = d.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata', weekday: 'short' });
+      const timeFormatted = d.toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true });
+      const suffix = (day === 1 || day === 21 || day === 31) ? 'st' :
+                     (day === 2 || day === 22) ? 'nd' :
+                     (day === 3 || day === 23) ? 'rd' : 'th';
+      return `${day}${suffix} ${monthFull}, ${year} (${weekday}) at ${timeFormatted}`;
     }
     if (fallbackMonthStr) {
       const parts = fallbackMonthStr.split('-');
@@ -855,18 +938,117 @@
         {/if}
       </div>
 
-      <select class="select-filter" bind:value={distanceFilter}>
-        <option value="all">All Distances</option>
-        {#each availableDistances as dist}
-          <option value={dist}>{dist}</option>
-        {/each}
-      </select>
+      <!-- CUSTOM STYLED DISTANCE DROPDOWN -->
+      <div class="custom-zone-dropdown">
+        <button 
+          type="button" 
+          class="zone-dropdown-trigger {distanceFilter !== 'all' ? 'active-zone' : ''}" 
+          on:click|stopPropagation={() => {
+            isDistanceDropdownOpen = !isDistanceDropdownOpen;
+            isZoneDropdownOpen = false;
+            isStatusDropdownOpen = false;
+          }}
+        >
+          <i class="fa-solid fa-route"></i>
+          <span class="zone-name-txt">{distanceFilter === 'all' ? 'All Distances' : distanceFilter}</span>
+          <i class="fa-solid fa-chevron-down arrow-icon"></i>
+        </button>
 
-      <select class="select-filter" bind:value={statusFilter}>
-        <option value="all">All Status</option>
-        <option value="Ordered">Ordered Only</option>
-        <option value="Pending">Pending Only</option>
-      </select>
+        {#if isDistanceDropdownOpen}
+          <div class="zone-dropdown-menu">
+            <button 
+              type="button" 
+              class="zone-dropdown-item {distanceFilter === 'all' ? 'selected' : ''}" 
+              on:click={() => selectDistance('all')}
+            >
+              <span class="item-left">
+                <i class="fa-solid fa-layer-group"></i>
+                <span>All Distances</span>
+              </span>
+            </button>
+
+            {#each availableDistances as dist}
+              <button 
+                type="button" 
+                class="zone-dropdown-item {distanceFilter === dist ? 'selected' : ''}" 
+                on:click={() => selectDistance(dist)}
+              >
+                <span class="item-left">
+                  <i class="fa-solid fa-route"></i>
+                  <span>{dist}</span>
+                </span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
+      <!-- CUSTOM STYLED STATUS DROPDOWN -->
+      <div class="custom-zone-dropdown">
+        <button 
+          type="button" 
+          class="zone-dropdown-trigger {statusFilter !== 'all' ? 'active-zone' : ''}" 
+          on:click|stopPropagation={() => {
+            isStatusDropdownOpen = !isStatusDropdownOpen;
+            isZoneDropdownOpen = false;
+            isDistanceDropdownOpen = false;
+          }}
+        >
+          {#if statusFilter === 'all'}
+            <i class="fa-solid fa-list-check"></i>
+            <span class="zone-name-txt">All Status</span>
+          {:else if statusFilter === 'Ordered'}
+            <i class="fa-solid fa-circle-check" style="color: #10b981;"></i>
+            <span class="zone-name-txt">Ordered Only</span>
+            <span class="tab-badge">{totalOrdered}</span>
+          {:else}
+            <i class="fa-solid fa-clock" style="color: #f59e0b;"></i>
+            <span class="zone-name-txt">Pending Only</span>
+            <span class="tab-badge">{totalPending}</span>
+          {/if}
+          <i class="fa-solid fa-chevron-down arrow-icon"></i>
+        </button>
+
+        {#if isStatusDropdownOpen}
+          <div class="zone-dropdown-menu">
+            <button 
+              type="button" 
+              class="zone-dropdown-item {statusFilter === 'all' ? 'selected' : ''}" 
+              on:click={() => selectStatus('all')}
+            >
+              <span class="item-left">
+                <i class="fa-solid fa-list-check"></i>
+                <span>All Status</span>
+              </span>
+              <span class="tab-badge">{totalAllCount}</span>
+            </button>
+
+            <button 
+              type="button" 
+              class="zone-dropdown-item {statusFilter === 'Ordered' ? 'selected' : ''}" 
+              on:click={() => selectStatus('Ordered')}
+            >
+              <span class="item-left">
+                <i class="fa-solid fa-circle-check" style="color: #10b981;"></i>
+                <span>Ordered Only</span>
+              </span>
+              <span class="tab-badge">{totalOrdered}</span>
+            </button>
+
+            <button 
+              type="button" 
+              class="zone-dropdown-item {statusFilter === 'Pending' ? 'selected' : ''}" 
+              on:click={() => selectStatus('Pending')}
+            >
+              <span class="item-left">
+                <i class="fa-solid fa-clock" style="color: #f59e0b;"></i>
+                <span>Pending Only</span>
+              </span>
+              <span class="tab-badge">{totalPending}</span>
+            </button>
+          </div>
+        {/if}
+      </div>
     </div>
   </section>
 
@@ -1028,13 +1210,12 @@
 
             <div class="card-bottom">
               {#if r.order_status === 'Ordered'}
-                <button 
+                <span 
                   class="action-toggle-btn btn-status-ordered" 
-                  on:click={() => openOrderWorkflowModal(r)}
-                  title="Click to update order details"
+                  style="cursor: default;"
                 >
-                  <i class="fa-solid fa-circle-check"></i> {r.time_slot || 'Ordered'} for {r.receiver_name ? r.receiver_name.split(' ')[0] : 'Receiver'} ({formatTime(r.ordered_at)})
-                </button>
+                  <i class="fa-solid fa-circle-check"></i> Ordered
+                </span>
                 <button 
                   class="icon-btn icon-btn-danger" 
                   on:click={() => resetOrderStatus(r)} 
@@ -1120,7 +1301,16 @@
 <!-- TWO-STEP ORDERING & RECEIVER SELECTION MODAL -->
 {#if showOrderModal}
   <div class="modal-overlay">
-    <div class="modal-card" style="max-width:620px;">
+    <div class="modal-card" style="max-width:620px; position:relative;">
+      <!-- ANIMATING LOADING OVERLAY FOR ASSIGNING ORDER -->
+      {#if isAssigningOrder}
+        <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--modal-bg); opacity: 0.94; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1000; border-radius: var(--radius-lg); backdrop-filter: blur(4px);">
+          <div style="width: 50px; height: 50px; border: 4px solid var(--border-color); border-top-color: var(--purple-accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 1.25rem;"></div>
+          <p style="font-family: 'Outfit', sans-serif; font-weight: 700; font-size: 1.15rem; color: var(--text-main); margin: 0;">Assigning Delivery Receiver...</p>
+          <p style="font-size: 0.82rem; color: var(--text-muted); margin-top: 0.35rem;">Please wait while the order is being confirmed.</p>
+        </div>
+      {/if}
+
       <div class="modal-header">
         <div>
           <h3 style="font-size:1.2rem; font-family:'Outfit', sans-serif;">
@@ -1134,7 +1324,7 @@
             Ordering for: <strong style="color:var(--text-main)">{selectedRestForOrder?.name}</strong> ({formatMonthHeader(currentMonth)})
           </p>
         </div>
-        <button class="btn-close" on:click={() => showOrderModal = false}>&times;</button>
+        <button class="btn-close" on:click={() => !isAssigningOrder && (showOrderModal = false)} disabled={isAssigningOrder}>&times;</button>
       </div>
 
       <!-- STEP 1: CHOOSE TIME SLOT -->
@@ -1179,7 +1369,7 @@
             <span style="font-size:0.85rem; font-weight:700; color:var(--amber-accent); display:flex; align-items:center; gap:0.4rem;">
               <i class="fa-solid {selectedTimeSlot?.icon || 'fa-clock'}"></i> Selected Slot: {selectedTimeSlot?.slot_name} ({selectedTimeSlot?.start_time} - {selectedTimeSlot?.end_time})
             </span>
-            <button class="btn btn-outline" style="padding:0.25rem 0.65rem; font-size:0.75rem;" on:click={() => orderModalStep = 'slot'}>
+            <button class="btn btn-outline" style="padding:0.25rem 0.65rem; font-size:0.75rem;" on:click={() => !isAssigningOrder && (orderModalStep = 'slot')} disabled={isAssigningOrder}>
               &larr; Change Slot
             </button>
           </div>
@@ -1191,12 +1381,13 @@
               type="text" 
               placeholder="Search receiver name, phone or address..." 
               bind:value={receiverSearchQuery} 
+              disabled={isAssigningOrder}
             />
           </div>
 
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
             <span style="font-size:0.82rem; font-weight:700; color:var(--text-muted);">SELECT FROM {receiversList.length} SAVED RECEIVERS</span>
-            <button class="btn btn-outline" style="padding:0.35rem 0.75rem; font-size:0.8rem;" on:click={() => showQuickAddRec = true}>
+            <button class="btn btn-outline" style="padding:0.35rem 0.75rem; font-size:0.8rem;" on:click={() => !isAssigningOrder && (showQuickAddRec = true)} disabled={isAssigningOrder}>
               <i class="fa-solid fa-user-plus" style="color:var(--purple-accent)"></i> + Add New Receiver
             </button>
           </div>
@@ -1210,8 +1401,8 @@
               {#each filteredReceiversForPicker as rec (rec.id)}
                 <div 
                   class="picker-rec-item" 
-                  style="background:var(--input-bg); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:0.85rem; display:flex; justify-content:space-between; align-items:center; cursor:pointer; transition:var(--transition);"
-                  on:click={() => confirmOrderWithReceiver(rec)}
+                  style="background:var(--input-bg); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:0.85rem; display:flex; justify-content:space-between; align-items:center; cursor:pointer; transition:var(--transition); {isAssigningOrder ? 'opacity: 0.6; pointer-events: none;' : ''}"
+                  on:click={() => !isAssigningOrder && confirmOrderWithReceiver(rec)}
                 >
                   <div style="flex:1; min-width:0; padding-right:0.75rem;">
                     <div style="display:flex; align-items:center; gap:0.5rem;">
@@ -1224,7 +1415,7 @@
                       <i class="fa-solid fa-location-dot" style="color:var(--swiggy-color)"></i> {rec.address}
                     </p>
                   </div>
-                  <button class="btn btn-purple" style="padding:0.45rem 0.85rem; font-size:0.82rem; flex-shrink:0;">
+                  <button class="btn btn-purple" style="padding:0.45rem 0.85rem; font-size:0.82rem; flex-shrink:0;" disabled={isAssigningOrder}>
                     <i class="fa-solid fa-check"></i> Assign
                   </button>
                 </div>
@@ -1233,10 +1424,10 @@
           </div>
 
           <div class="modal-footer" style="justify-content:space-between; align-items:center;">
-            <button type="button" class="btn btn-outline" on:click={() => confirmOrderWithReceiver(null)}>
+            <button type="button" class="btn btn-outline" on:click={() => !isAssigningOrder && confirmOrderWithReceiver(null)} disabled={isAssigningOrder}>
               Mark without Receiver
             </button>
-            <button type="button" class="btn btn-outline" on:click={() => showOrderModal = false}>
+            <button type="button" class="btn btn-outline" on:click={() => !isAssigningOrder && (showOrderModal = false)} disabled={isAssigningOrder}>
               Cancel
             </button>
           </div>
@@ -1245,25 +1436,29 @@
           <form on:submit|preventDefault={saveQuickReceiver} style="margin-top:0.5rem;">
             <div class="form-group">
               <label>Receiver Name / Label *</label>
-              <input type="text" class="form-control" placeholder="e.g. Arif Imtiyaz frnd Jadavpur" bind:value={quickRecName} required />
+              <input type="text" class="form-control" placeholder="e.g. Arif Imtiyaz frnd Jadavpur" bind:value={quickRecName} disabled={isAssigningOrder} required />
             </div>
 
             <div class="form-group">
               <label>Phone Number</label>
-              <input type="text" class="form-control" placeholder="e.g. +91-8617615800" bind:value={quickRecPhone} />
+              <input type="text" class="form-control" placeholder="e.g. +91-8617615800" bind:value={quickRecPhone} disabled={isAssigningOrder} />
             </div>
 
             <div class="form-group">
               <label>Full Delivery Address *</label>
-              <textarea class="form-control" rows="3" placeholder="Full address..." bind:value={quickRecAddress} required></textarea>
+              <textarea class="form-control" rows="3" placeholder="Full address..." bind:value={quickRecAddress} disabled={isAssigningOrder} required></textarea>
             </div>
 
             <div class="modal-footer" style="justify-content:space-between;">
-              <button type="button" class="btn btn-outline" on:click={() => showQuickAddRec = false}>
+              <button type="button" class="btn btn-outline" on:click={() => !isAssigningOrder && (showQuickAddRec = false)} disabled={isAssigningOrder}>
                 &larr; Back to Receivers List
               </button>
-              <button type="submit" class="btn btn-purple">
-                <i class="fa-solid fa-check"></i> Save & Assign Receiver
+              <button type="submit" class="btn btn-purple" disabled={isAssigningOrder}>
+                {#if isAssigningOrder}
+                  <i class="fa-solid fa-spinner fa-spin"></i> Saving...
+                {:else}
+                  <i class="fa-solid fa-check"></i> Save & Assign Receiver
+                {/if}
               </button>
             </div>
           </form>
@@ -1330,9 +1525,13 @@
       <h3 class="confirm-title">{confirmTitle || 'Are you sure?'}</h3>
       <p class="confirm-message">{confirmMessage}</p>
       <div class="modal-footer" style="justify-content:center; gap:0.85rem; border-top:none; margin-top:1.25rem;">
-        <button class="btn btn-outline" on:click={() => showConfirmModal = false}>Cancel</button>
-        <button class="btn btn-danger-action" on:click={executeConfirmedAction}>
-          <i class="fa-solid fa-trash-can"></i> Confirm Action
+        <button class="btn btn-outline" on:click={() => !isExecutingConfirm && (showConfirmModal = false)} disabled={isExecutingConfirm}>Cancel</button>
+        <button class="btn btn-danger-action" on:click={executeConfirmedAction} disabled={isExecutingConfirm}>
+          {#if isExecutingConfirm}
+            <i class="fa-solid fa-spinner fa-spin"></i> Confirming...
+          {:else}
+            <i class="fa-solid fa-trash-can"></i> Confirm Action
+          {/if}
         </button>
       </div>
     </div>
