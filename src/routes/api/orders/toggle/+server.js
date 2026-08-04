@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { query, invalidateCache } from '$lib/server/db.js';
-import { _broadcastLiveUpdate } from '../live-updates/+server.js';
+import { broadcastLiveUpdate } from '$lib/server/liveUpdates.js';
 
 function getCurrentMonthYear() {
   const d = new Date();
@@ -44,7 +44,7 @@ export async function POST({ request, cookies }) {
     if (isReset) {
       await query('DELETE FROM orders WHERE restaurant_id = ? AND month_year = ?', [restaurant_id, targetMonthYear]);
       await query('DELETE FROM order_history WHERE restaurant_id = ? AND month_year = ?', [restaurant_id, targetMonthYear]);
-      _broadcastLiveUpdate();
+      broadcastLiveUpdate();
 
       return json({ 
         success: true, 
@@ -161,7 +161,7 @@ export async function POST({ request, cookies }) {
       console.error('Failed to write to order_history:', histErr);
     }
 
-    _broadcastLiveUpdate();
+    broadcastLiveUpdate();
 
     return json({ 
       success: true, 

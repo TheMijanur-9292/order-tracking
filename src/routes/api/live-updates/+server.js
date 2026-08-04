@@ -1,31 +1,15 @@
-import { invalidateCache } from '$lib/server/db.js';
-
-const connectedClients = new Set();
-
-export function _broadcastLiveUpdate() {
-  invalidateCache();
-  for (const client of connectedClients) {
-    try {
-      client.controller.enqueue(`data: ${JSON.stringify({ type: 'ORDER_UPDATED', timestamp: Date.now() })}\n\n`);
-    } catch (e) {
-      connectedClients.delete(client);
-    }
-  }
-}
+import { addClient, removeClient } from '$lib/server/liveUpdates.js';
 
 export function GET() {
   let clientRef;
 
   const stream = new ReadableStream({
     start(controller) {
-      clientRef = { controller };
-      connectedClients.add(clientRef);
+      clientRef = addClient(controller);
       controller.enqueue(`data: ${JSON.stringify({ type: 'CONNECTED' })}\n\n`);
     },
     cancel() {
-      if (clientRef) {
-        connectedClients.delete(clientRef);
-      }
+      removeClient(clientRef);
     }
   });
 
