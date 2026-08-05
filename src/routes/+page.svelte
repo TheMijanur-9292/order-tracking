@@ -760,7 +760,7 @@
     <div class="brand">
       <div class="brand-left">
         <div class="brand-icon"><i class="fa-solid fa-utensils"></i></div>
-        <h1 class="brand-title">Kolkata Order Tracker</h1>
+        <h1 class="brand-title">ZOMSWI TRACKER</h1>
       </div>
 
       <div class="brand-controls">

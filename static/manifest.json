@@ -1,6 +1,6 @@
 {
-  "name": "Kolkata Food Order Tracker",
-  "short_name": "ZomSwi Tracker",
+  "name": "ZOMSWI TRACKER",
+  "short_name": "ZOMSWI TRACKER",
   "description": "Kolkata Swiggy & Zomato Zone Food Order Tracking Application",
   "start_url": "/",
   "display": "standalone",
