@@ -2382,3 +2382,142 @@ a:active,
 .calendar-day:active {
   transform: scale(0.95) !important;
 }
+
+/* TIME SLOTS MANAGER STYLES */
+.timeslots-header-box {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.timeslots-header-box h3 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.timeslots-header-box p {
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  margin-top: 0.2rem;
+}
+
+.timeslots-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 1.15rem;
+  margin-top: 1rem;
+}
+
+.timeslot-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 1.15rem 1.25rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: var(--card-shadow);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.timeslot-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  border-color: var(--primary-accent);
+}
+
+.ts-left-content {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.ts-icon-avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  flex-shrink: 0;
+  background: var(--input-bg);
+  border: 1px solid var(--border-color);
+}
+
+.ts-meta-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.ts-header-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ts-title-text {
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.08rem;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0;
+}
+
+.ts-order-num {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.1rem 0.45rem;
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+}
+
+.ts-time-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.ts-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .timeslots-grid {
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+  }
+
+  .timeslot-card {
+    padding: 1rem;
+  }
+
+  .ts-icon-avatar {
+    width: 40px;
+    height: 40px;
+    font-size: 1.1rem;
+    border-radius: 10px;
+  }
+
+  .ts-title-text {
+    font-size: 1rem;
+  }
+
+  .ts-time-pill {
+    font-size: 0.82rem;
+  }
+}

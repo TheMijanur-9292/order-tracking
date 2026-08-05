@@ -1183,8 +1183,8 @@
                 </button>
               </div>
 
-              <!-- ASSIGNED RECEIVER INFO BADGE (IF ORDERED) -->
-              {#if r.order_status === 'Ordered' && r.receiver_name}
+              <!-- ASSIGNED RECEIVER INFO BADGE (ONLY VISIBLE FOR LOGGED IN ADMIN) -->
+              {#if $isAdmin && r.order_status === 'Ordered' && r.receiver_name}
                 <div class="rec-assigned-badge" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.3); padding:0.45rem 0.75rem; border-radius:var(--radius-sm); margin-top:0.2rem; font-size:0.82rem; color:var(--text-main);">
                   <div style="display:flex; justify-content:space-between; align-items:center;">
                     <span style="font-weight:700; color:var(--purple-accent); display:flex; align-items:center; gap:0.4rem;">

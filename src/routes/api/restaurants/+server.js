@@ -8,15 +8,18 @@ function getCurrentMonthYear() {
   return `${year}-${month}`;
 }
 
-export async function GET({ url }) {
+export async function GET({ url, cookies }) {
   try {
+    const sessionToken = cookies.get('zomswi_admin_session');
+    const isAdmin = !!sessionToken;
+
     const monthYear = url.searchParams.get('month_year') || getCurrentMonthYear();
     const zone_id = url.searchParams.get('zone_id') || 'all';
     const search = (url.searchParams.get('search') || '').trim();
     const platform = url.searchParams.get('platform') || 'all';
     const status = url.searchParams.get('status') || 'all';
 
-    const cacheKey = `rests_${monthYear}_${zone_id}_${platform}_${status}_${search}`;
+    const cacheKey = `rests_${monthYear}_${zone_id}_${platform}_${status}_${search}_${isAdmin ? 'adm' : 'pub'}`;
     const cached = getCachedData(cacheKey);
     if (cached) return json(cached);
 
@@ -66,7 +69,17 @@ export async function GET({ url }) {
 
     sql += ` ORDER BY r.is_seeded DESC, r.name ASC`;
 
-    const restaurants = await query(sql, params);
+    let restaurants = await query(sql, params);
+    if (!isAdmin) {
+      restaurants = restaurants.map(r => ({
+        ...r,
+        receiver_id: null,
+        receiver_name: null,
+        receiver_address: null,
+        receiver_phone: null
+      }));
+    }
+
     const resPayload = { success: true, restaurants };
     setCachedData(cacheKey, resPayload, 15000);
     return json(resPayload);

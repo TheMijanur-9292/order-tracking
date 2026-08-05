@@ -336,7 +336,7 @@
     editRestId = null;
     restName = '';
     restPlatform = 'Both';
-    restDistance = '2-3 km';
+    restDistance = 'C. 2-3';
     restAddress = '';
     restZoneId = zones.length > 0 ? zones[0].id : '';
     showRestModal = true;
@@ -350,7 +350,7 @@
     restZoneId = r.zone_id;
     restName = r.name;
     restPlatform = r.platform || 'Both';
-    restDistance = r.distance || '2-3 km';
+    restDistance = r.distance || 'C. 2-3';
     restAddress = r.address || '';
     showRestModal = true;
   }
@@ -1198,37 +1198,41 @@
 
       <!-- TAB 5: TIME SLOTS MANAGER -->
       {#if activeTab === 'timeslots'}
-        <div class="admin-toolbar timeslots-header-row" style="display:flex; justify-content:space-between; align-items:center;">
+        <div class="timeslots-header-box">
           <div>
-            <h3 style="font-family:'Outfit', sans-serif; font-size:1.25rem;">Daily Food Time Slots ({timeSlots.length})</h3>
-            <p style="font-size:0.82rem; color:var(--text-muted); margin-top:0.15rem;">Configured ordering time windows (Breakfast, Lunch, Snacks, Dinner, Late Night)</p>
+            <h3>Daily Food Time Slots ({timeSlots.length})</h3>
+            <p>Configured ordering time windows (Breakfast, Lunch, Snacks, Dinner, Late Night)</p>
           </div>
-          <button class="btn btn-emerald" style="padding:0.4rem 0.8rem; font-size:0.8rem;" on:click={openAddTimeSlot}>
-            <i class="fa-solid fa-plus"></i> <span class="desktop-only-txt">Add New Time Slot</span><span class="mobile-only-txt">+ Add</span>
+          <button class="btn btn-emerald" on:click={openAddTimeSlot}>
+            <i class="fa-solid fa-plus"></i> Add Time Slot
           </button>
         </div>
 
-        <div class="timeslots-grid-compact">
+        <div class="timeslots-grid">
           {#each timeSlots as slot (slot.id)}
-            <div class="timeslot-compact-card" style="border-left:4px solid {slot.color_theme || '#3b82f6'};">
-              <div class="ts-left">
-                <div class="ts-icon-box" style="color:{slot.color_theme || '#3b82f6'};">
+            <div class="timeslot-card" style="border-left: 5px solid {slot.color_theme || '#3b82f6'};">
+              <div class="ts-left-content">
+                <div class="ts-icon-avatar" style="color: {slot.color_theme || '#3b82f6'};">
                   <i class="fa-solid {slot.icon || 'fa-clock'}"></i>
                 </div>
-                <div class="ts-info">
-                  <div class="ts-title-row">
-                    <h4 class="ts-name">{slot.slot_name}</h4>
-                    <span class="ts-order-badge">#{slot.display_order}</span>
+                <div class="ts-meta-info">
+                  <div class="ts-header-title">
+                    <h4 class="ts-title-text">{slot.slot_name}</h4>
+                    <span class="ts-order-num">#{slot.display_order}</span>
                   </div>
-                  <span class="ts-time-badge" style="color:{slot.color_theme || 'var(--text-main)'};">
+                  <span class="ts-time-pill" style="color: {slot.color_theme || 'var(--text-main)'};">
                     <i class="fa-regular fa-clock"></i> {slot.start_time} - {slot.end_time}
                   </span>
                 </div>
               </div>
 
-              <div class="ts-actions">
-                <button class="icon-btn" style="width:32px; height:32px; font-size:0.8rem;" on:click={() => openEditTimeSlot(slot)} title="Edit Slot"><i class="fa-solid fa-pen-to-square"></i></button>
-                <button class="icon-btn icon-btn-danger" style="width:32px; height:32px; font-size:0.8rem;" on:click={() => deleteTimeSlot(slot)} title="Delete Slot"><i class="fa-solid fa-trash-can"></i></button>
+              <div class="ts-actions-group">
+                <button class="icon-btn" on:click={() => openEditTimeSlot(slot)} title="Edit Slot">
+                  <i class="fa-solid fa-pen-to-square"></i>
+                </button>
+                <button class="icon-btn icon-btn-danger" on:click={() => deleteTimeSlot(slot)} title="Delete Slot">
+                  <i class="fa-solid fa-trash-can"></i>
+                </button>
               </div>
             </div>
           {/each}
@@ -1300,6 +1304,16 @@
             <option value="Both">Both (Swiggy & Zomato)</option>
             <option value="Swiggy">Swiggy Only</option>
             <option value="Zomato">Zomato Only</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Distance *</label>
+          <select class="form-control" bind:value={restDistance}>
+            <option value="A. 0-1">A. 0-1</option>
+            <option value="B. 1-2">B. 1-2</option>
+            <option value="C. 2-3">C. 2-3</option>
+            <option value="D. 3-5">D. 3-5</option>
+            <option value="E. 5-7">E. 5-7</option>
           </select>
         </div>
         <div class="form-group">

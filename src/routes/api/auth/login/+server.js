@@ -28,7 +28,7 @@ export async function POST({ request, cookies }) {
       path: '/',
       httpOnly: true,
       sameSite: 'lax',
-      secure: false, // works on localhost HTTP
+      secure: process.env.NODE_ENV === 'production',
       maxAge: 60 * 60 * 24 * 365 * 10 // 10 years (Permanent until manual logout)
     });
 
