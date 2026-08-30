@@ -1,4 +1,4 @@
-# Kolkata Swiggy & Zomato Order Tracker (ZOMSWI)
+# Kolkata Order Tracker (ZOMSWI)
 
 A high-performance full-stack web application for tracking, dispatching, and managing monthly food orders across Kolkata zones.
 
@@ -29,8 +29,8 @@ PORT=3045
 DATABASE_URL=
 
 # Admin Authentication Credentials
-ADMIN_EMAIL=superadmin@gmail.com
-ADMIN_PASSWORD=YourSecurePassword
+ADMIN_EMAIL=
+ADMIN_PASSWORD=
 AUTH_SALT=zomswi_salt_2026
 ```
 
