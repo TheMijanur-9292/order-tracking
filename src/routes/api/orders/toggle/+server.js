@@ -126,7 +126,7 @@ export async function POST({ request, cookies }) {
       orderId = insRes[0]?.id || null;
     }
 
-    // Insert Log Entry into order_history Table
+    // Insert / Refresh Log Entry in order_history Table
     try {
       const restInfo = await query(`
         SELECT r.name AS restaurant_name, z.name AS zone_name 
@@ -134,6 +134,12 @@ export async function POST({ request, cookies }) {
         LEFT JOIN zones z ON r.zone_id = z.id 
         WHERE r.id = ?
       `, [restaurant_id]);
+
+      // Delete any existing history entry for this restaurant & month to prevent duplicate rows on edits
+      await query(
+        'DELETE FROM order_history WHERE restaurant_id = ? AND month_year = ?',
+        [restaurant_id, targetMonthYear]
+      );
 
       await query(
         `INSERT INTO order_history (
@@ -161,6 +167,7 @@ export async function POST({ request, cookies }) {
       console.error('Failed to write to order_history:', histErr);
     }
 
+    invalidateCache();
     broadcastLiveUpdate();
 
     return json({ 

@@ -4,9 +4,9 @@
   "description": "Swiggy & Zomato Zone Order Tracker for Kolkata Awign Lists (SvelteKit 5)",
   "type": "module",
   "scripts": {
-    "dev": "vite dev --port 3048 --host",
+    "dev": "vite dev --port 3045 --host",
     "build": "vite build",
-    "preview": "vite preview --port 3048"
+    "preview": "vite preview --port 3045"
   },
   "dependencies": {
     "@sveltejs/adapter-vercel": "^5.4.3",

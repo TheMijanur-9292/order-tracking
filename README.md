@@ -1,66 +1,56 @@
-# Kolkata Swiggy & Zomato Food Order Tracker (Awign Zone Manager)
+# Kolkata Swiggy & Zomato Order Tracker (ZOMSWI)
 
-An intuitive, full-stack web application designed for single-user management and tracking of monthly food orders across Kolkata zones (Jadavpur, Salt Lake, Garia, Park Street, Behala, Howrah, Dum Dum, etc.) from Awign restaurant lists.
-
----
-
-## 🚀 Key Features
-
-1. **Awign Excel/CSV Import**:
-   - Drag & drop your Awign Excel spreadsheet (`.xlsx`, `.xls`, `.csv`).
-   - Automatically parses restaurant names, distance ranges, platforms (Swiggy / Zomato / Both), and receiver addresses.
-
-2. **Zone-Wise Navigation**:
-   - Filter restaurants by Kolkata zones.
-   - Live badge counters showing `Ordered / Total` for each zone.
-
-3. **Monthly Tracking & Reset**:
-   - Filter orders by Month (e.g., July 2026, August 2026).
-   - One-click toggle between **Pending** ⏳ and **Ordered** ✅.
-   - Shows timestamp of order completion.
-
-4. **Dual Database Architecture (Neon Cloud PostgreSQL + Local SQLite Fallback)**:
-   - **Neon Cloud DB**: Set `DATABASE_URL` in `.env` for production database hosted on Neon.
-   - **Local Auto-Fallback**: If `DATABASE_URL` is empty, it seamlessly uses local file database (`data.db`) without any setup required!
-
-5. **Admin Management (CRUD)**:
-   - Add new restaurants manually.
-   - Edit existing restaurant info, platform links, distance, address.
-   - Delete restaurants or create/delete Kolkata zones.
+A high-performance full-stack web application for tracking, dispatching, and managing monthly food orders across Kolkata zones.
 
 ---
 
-## ⚙️ How to Run
+## 📋 Prerequisites
+
+- **Node.js**: v18.0.0 or higher
+- **npm**: v9.0.0 or higher
+
+---
+
+## ⚙️ Installation & Setup
 
 ### 1. Install Dependencies
 ```bash
 npm install
 ```
 
-### 2. Configure Neon DB (Optional)
-Open `.env` and set your Neon Cloud PostgreSQL URL:
-```env
-DATABASE_URL=postgresql://user:password@ep-example-123456.ap-southeast-1.aws.neon.tech/neondb?sslmode=require
-PORT=3000
-```
-*(If left blank, it will automatically run using local `data.db` database).*
+### 2. Configure Environment Variables
+Create or edit `.env` in the root directory:
 
-### 3. Start Application
-```bash
-npm start
+```env
+# Port Configuration
+PORT=3045
+
+# Database Configuration (Neon Cloud PostgreSQL or Leave blank for local SQLite fallback)
+DATABASE_URL=
+
+# Admin Authentication Credentials
+ADMIN_EMAIL=superadmin@gmail.com
+ADMIN_PASSWORD=YourSecurePassword
+AUTH_SALT=zomswi_salt_2026
 ```
-Or for auto-reloading dev mode:
+
+*(Note: If `DATABASE_URL` is left empty, the application automatically uses a local `data.db` SQLite database).*
+
+---
+
+## 🚀 Running the Application
+
+### Development Mode (with Live Reload)
 ```bash
 npm run dev
 ```
 
-Open your browser at: **`http://localhost:3000`**
-
----
-
-## 📁 Sample Awign Excel Import
-You can generate a test Awign Excel spreadsheet anytime by running:
+### Production Build & Start
 ```bash
-node generate_sample_excel.js
+npm run build
+npm start
 ```
-Then upload `Awign_Sample_Kolkata_Jadavpur_List.xlsx` using the **Import Excel** button on the web dashboard.
+
+Access in your browser at:
+- **Public Tracker:** [http://localhost:3045](http://localhost:3045)
+- **Admin Workspace:** [http://localhost:3045/admin](http://localhost:3045/admin)

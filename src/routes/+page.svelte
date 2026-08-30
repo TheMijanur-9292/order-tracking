@@ -29,7 +29,7 @@
 
   // PAGINATION & BATCH PERFORMANCE STATE
   let currentPage = 1;
-  let pageSize = 24;
+  let pageSize = 15;
 
   let zonesData = [];
   let restaurantsData = [];
@@ -1064,9 +1064,9 @@
         </span>
 
         <select class="select-filter" style="padding:0.3rem 0.6rem; font-size:0.8rem;" bind:value={pageSize}>
-          <option value={24}>24 per page</option>
-          <option value={48}>48 per page</option>
-          <option value={96}>96 per page</option>
+          <option value={15}>15 per page</option>
+          <option value={30}>30 per page</option>
+          <option value={60}>60 per page</option>
           <option value="all">Show All</option>
         </select>
       </div>

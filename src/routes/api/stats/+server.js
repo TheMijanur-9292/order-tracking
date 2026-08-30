@@ -15,7 +15,7 @@ export async function GET({ url }) {
 
     const cached = getCachedData(cacheKey);
     if (cached) {
-      return json(cached);
+      return json(cached, { headers: { 'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=60' } });
     }
 
     const [zoneCount, restaurantCount, orderedCount] = await Promise.all([
@@ -38,7 +38,7 @@ export async function GET({ url }) {
     };
 
     setCachedData(cacheKey, resPayload, 15000);
-    return json(resPayload);
+    return json(resPayload, { headers: { 'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=60' } });
   } catch (err) {
     return json({ success: false, error: err.message }, { status: 500 });
   }

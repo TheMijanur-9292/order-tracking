@@ -22,6 +22,43 @@ export function verifyPassword(password, hash) {
   }
 }
 
+export function createSignedSession(user) {
+  const salt = process.env.AUTH_SALT || 'zomswi_salt_2026';
+  const payloadStr = JSON.stringify({ email: user.email, role: user.role, time: Date.now() });
+  const b64Payload = Buffer.from(payloadStr, 'utf-8').toString('base64');
+  const signature = crypto.createHmac('sha256', salt).update(b64Payload).digest('hex');
+  return `${b64Payload}.${signature}`;
+}
+
+export function verifySession(token) {
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  const salt = process.env.AUTH_SALT || 'zomswi_salt_2026';
+
+  // Support both new HMAC signed tokens and legacy tokens during migration
+  if (parts.length === 2) {
+    const [b64Payload, signature] = parts;
+    const expectedSig = crypto.createHmac('sha256', salt).update(b64Payload).digest('hex');
+    try {
+      if (!crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expectedSig, 'hex'))) {
+        return null;
+      }
+      const payload = JSON.parse(Buffer.from(b64Payload, 'base64').toString('utf-8'));
+      return payload && payload.email ? payload : null;
+    } catch (e) {
+      return null;
+    }
+  } else {
+    // Legacy token fallback
+    try {
+      const payload = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
+      return payload && payload.email ? payload : null;
+    } catch (e) {
+      return null;
+    }
+  }
+}
+
 const databaseUrl = process.env.DATABASE_URL;
 
 let isPg = false;
@@ -171,8 +208,14 @@ export async function initDb() {
         );
 
         CREATE INDEX IF NOT EXISTS idx_restaurants_zone ON restaurants(zone_id);
+        CREATE INDEX IF NOT EXISTS idx_restaurants_zone_dist ON restaurants(zone_id, distance);
+        CREATE INDEX IF NOT EXISTS idx_restaurants_platform ON restaurants(platform);
         CREATE INDEX IF NOT EXISTS idx_orders_rest_month ON orders(restaurant_id, month_year);
+        CREATE INDEX IF NOT EXISTS idx_orders_month_status ON orders(month_year, status);
+        CREATE INDEX IF NOT EXISTS idx_orders_receiver ON orders(receiver_id);
         CREATE INDEX IF NOT EXISTS idx_order_history_month ON order_history(month_year);
+        CREATE INDEX IF NOT EXISTS idx_order_history_rest_month ON order_history(restaurant_id, month_year);
+        CREATE INDEX IF NOT EXISTS idx_order_history_receiver ON order_history(receiver_id);
       `);
 
       // Auto-seed admin user from environment variables (ADMIN_EMAIL & ADMIN_PASSWORD)
@@ -212,6 +255,7 @@ export async function initDb() {
         filename: path.join(process.cwd(), 'data.db'),
         driver: sqlite3.Database
       });
+      await sqliteDb.exec('PRAGMA foreign_keys = ON;');
     }
 
     await sqliteDb.exec(`
@@ -302,8 +346,14 @@ export async function initDb() {
       );
 
       CREATE INDEX IF NOT EXISTS idx_restaurants_zone ON restaurants(zone_id);
+      CREATE INDEX IF NOT EXISTS idx_restaurants_zone_dist ON restaurants(zone_id, distance);
+      CREATE INDEX IF NOT EXISTS idx_restaurants_platform ON restaurants(platform);
       CREATE INDEX IF NOT EXISTS idx_orders_rest_month ON orders(restaurant_id, month_year);
+      CREATE INDEX IF NOT EXISTS idx_orders_month_status ON orders(month_year, status);
+      CREATE INDEX IF NOT EXISTS idx_orders_receiver ON orders(receiver_id);
       CREATE INDEX IF NOT EXISTS idx_order_history_month ON order_history(month_year);
+      CREATE INDEX IF NOT EXISTS idx_order_history_rest_month ON order_history(restaurant_id, month_year);
+      CREATE INDEX IF NOT EXISTS idx_order_history_receiver ON order_history(receiver_id);
     `);
 
     try {

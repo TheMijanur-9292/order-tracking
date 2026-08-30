@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { query, verifyPassword } from '$lib/server/db.js';
+import { query, verifyPassword, createSignedSession } from '$lib/server/db.js';
 
 export async function POST({ request, cookies }) {
   try {
@@ -22,8 +22,8 @@ export async function POST({ request, cookies }) {
       return json({ success: false, error: 'Invalid email or password' }, { status: 401 });
     }
 
-    // Set permanent admin session cookie (10 years)
-    const sessionToken = Buffer.from(JSON.stringify({ email: user.email, role: user.role, time: Date.now() })).toString('base64');
+    // Set cryptographically signed permanent admin session cookie (10 years)
+    const sessionToken = createSignedSession(user);
     cookies.set('zomswi_admin_session', sessionToken, {
       path: '/',
       httpOnly: true,

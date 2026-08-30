@@ -1,4 +1,5 @@
 import { json } from '@sveltejs/kit';
+import { verifySession, createSignedSession } from '$lib/server/db.js';
 
 export async function GET({ cookies }) {
   const sessionToken = cookies.get('zomswi_admin_session');
@@ -8,10 +9,11 @@ export async function GET({ cookies }) {
   }
 
   try {
-    const payload = JSON.parse(Buffer.from(sessionToken, 'base64').toString('utf-8'));
+    const payload = verifySession(sessionToken);
     if (payload && payload.email) {
-      // Refresh/extend session cookie for another 10 years
-      cookies.set('zomswi_admin_session', sessionToken, {
+      // Re-sign/extend session cookie with new HMAC signature
+      const newSignedToken = createSignedSession(payload);
+      cookies.set('zomswi_admin_session', newSignedToken, {
         path: '/',
         httpOnly: true,
         sameSite: 'lax',
@@ -25,7 +27,7 @@ export async function GET({ cookies }) {
       });
     }
   } catch (err) {
-    // invalid token format
+    // invalid token
   }
 
   return json({ authenticated: false });

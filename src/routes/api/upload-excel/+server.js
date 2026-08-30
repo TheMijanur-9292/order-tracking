@@ -1,10 +1,10 @@
 import { json } from '@sveltejs/kit';
 import * as xlsx from 'xlsx';
-import { query, invalidateCache } from '$lib/server/db.js';
+import { query, invalidateCache, verifySession } from '$lib/server/db.js';
 
 export async function POST({ request, cookies }) {
   const sessionToken = cookies.get('zomswi_admin_session');
-  if (!sessionToken) {
+  if (!sessionToken || !verifySession(sessionToken)) {
     return json({ success: false, error: 'Unauthorized. Please login as Admin.' }, { status: 401 });
   }
 
@@ -44,8 +44,7 @@ export async function POST({ request, cookies }) {
       return json({ success: false, error: 'Excel file is empty' }, { status: 400 });
     }
 
-    let insertedCount = 0;
-
+    const parsedRows = [];
     for (const row of rows) {
       const keys = Object.keys(row);
       const nameKey = keys.find(k => /restaurant|name|hotel/i.test(k)) || keys[0];
@@ -72,21 +71,32 @@ export async function POST({ request, cookies }) {
       const zomatoKey = keys.find(k => /zomato_url|zomato link/i.test(k));
       const zomato_url = zomatoKey ? String(row[zomatoKey]).trim() : '';
 
+      parsedRows.push([zone_id, name, platform, distance, address, swiggy_url, zomato_url]);
+    }
+
+    if (parsedRows.length === 0) {
+      return json({ success: false, error: 'No valid restaurant rows found in file' }, { status: 400 });
+    }
+
+    // High-performance batch insertion in chunks of 50
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < parsedRows.length; i += BATCH_SIZE) {
+      const chunk = parsedRows.slice(i, i + BATCH_SIZE);
+      const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, false)').join(', ');
+      const flatParams = chunk.flat();
       await query(
         `INSERT INTO restaurants (zone_id, name, platform, distance, address, swiggy_url, zomato_url, is_seeded)
-         VALUES (?, ?, ?, ?, ?, ?, ?, false)`,
-        [zone_id, name, platform, distance, address, swiggy_url, zomato_url]
+         VALUES ${placeholders}`,
+        flatParams
       );
-
-      insertedCount++;
     }
 
     invalidateCache();
 
     return json({
       success: true,
-      message: `Successfully imported ${insertedCount} extra restaurants into zone!`,
-      count: insertedCount
+      message: `Successfully imported ${parsedRows.length} extra restaurants into zone!`,
+      count: parsedRows.length
     });
   } catch (err) {
     return json({ success: false, error: err.message }, { status: 500 });

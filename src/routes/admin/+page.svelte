@@ -3,8 +3,62 @@
   import { userStore, isAdmin, isLoginModalOpen, authLoading, logoutUser } from '$lib/authStore.js';
 
 
-  // Active Admin Sidebar Tab: 'overview' | 'restaurants' | 'zones' | 'receivers' | 'timeslots' | 'history' | 'import'
+  function getCurrentMonthString() {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    return `${year}-${month}`;
+  }
+
+  function formatMonthHeader(monthStr) {
+    if (!monthStr || monthStr === 'all') return 'All Months';
+    const parts = monthStr.split('-');
+    if (parts.length < 2) return monthStr;
+    const year = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1;
+    const date = new Date(year, month, 1);
+    return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  }
+
+  let currentMonth = getCurrentMonthString();
+
+  // Active Admin Sidebar Tab: 'overview' | 'suggestions' | 'restaurants' | 'zones' | 'receivers' | 'timeslots' | 'history' | 'import'
   let activeTab = 'overview';
+
+  // SMART ORDER SUGGESTIONS MODULE STATE
+  let suggestionsList = [];
+  let suggestionsStats = {
+    total_matching: 0,
+    total_proven: 0,
+    total_fresh: 0,
+    total_ordered_this_month: 0,
+    total_pending_this_month: 0,
+    target_month: '',
+    prev_month: ''
+  };
+  let availableDistances = ['A. 0-1', 'B. 1-2', 'C. 2-3', 'D. 3-5', 'E. 5-7'];
+  let topReceiverSuggestions = [];
+  let suggZoneFilter = 'all';
+  let suggDistanceFilter = 'all';
+  let suggMonthFilter = getCurrentMonthString();
+  let suggStrategyFilter = 'all'; // 'all', 'proven', 'fresh', 'last_month'
+  let suggSlotFilter = 'all';
+  let suggPlatformFilter = 'all';
+  let suggSearchQuery = '';
+  let isLoadingSuggestions = false;
+
+  // Quick Order Modal from Suggestions
+  let showQuickOrderModal = false;
+  let quickOrderRestaurant = null;
+  let quickOrderMonth = getCurrentMonthString();
+  let quickOrderSlot = 'Lunch';
+  let quickOrderPlatform = 'Swiggy';
+  let quickOrderReceiverId = '';
+  let quickOrderReceiverName = '';
+  let quickOrderReceiverPhone = '';
+  let quickOrderReceiverAddress = '';
+  let quickOrderNotes = '';
+  let isSubmittingQuickOrder = false;
 
   // ORDER HISTORY MODULE STATE
   let orderHistoryList = [];
@@ -32,11 +86,11 @@
   let totalReceivers = 0;
   let totalOrdered = 0;
   let totalPending = 0;
-  let currentMonth = getCurrentMonthString();
 
   // Search & Filter
   let restSearch = '';
   let restZoneFilter = 'all';
+  let restDistanceFilter = 'all';
   let restPlatformFilter = 'all';
   let restSourceFilter = 'all';
 
@@ -95,11 +149,6 @@
 
   let copiedFieldId = null;
 
-  function getCurrentMonthString() {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-  }
-
   function showToast(msg, type = 'success') {
     toastMessage = msg;
     toastType = type;
@@ -135,15 +184,30 @@
     showToast('Admin login required to perform write actions', 'error');
   }
 
+  // Set of tabs loaded for instant 0ms switching
+  let loadedTabs = new Set();
+
   async function loadAllData() {
     isLoadingAllData = true;
     try {
-      await Promise.all([fetchZones(), fetchRestaurants(), fetchReceivers(), fetchTimeSlots(), fetchStats(), fetchOrderHistory()]);
+      // Stage 1: Load core stats, zones and restaurants immediately for sub-100ms render
+      await Promise.all([fetchZones(), fetchRestaurants(), fetchTimeSlots(), fetchStats()]);
+      loadedTabs.add('overview');
+      loadedTabs.add('restaurants');
+      loadedTabs.add('zones');
+      loadedTabs.add('timeslots');
     } catch (e) {
       console.error(e);
     } finally {
       isLoadingAllData = false;
     }
+
+    // Stage 2: Background prefetch suggestions, receivers & history silently
+    setTimeout(() => {
+      fetchSuggestions().then(() => loadedTabs.add('suggestions')).catch(() => {});
+      fetchReceivers().then(() => loadedTabs.add('receivers')).catch(() => {});
+      fetchOrderHistory().then(() => loadedTabs.add('history')).catch(() => {});
+    }, 150);
   }
 
   async function fetchOrderHistory() {
@@ -234,6 +298,155 @@
     showHistoryDetailModal = true;
   }
 
+  // SMART ORDER SUGGESTIONS HANDLERS
+  async function fetchSuggestions() {
+    isLoadingSuggestions = true;
+    try {
+      const params = new URLSearchParams({
+        zone_id: suggZoneFilter,
+        distance: suggDistanceFilter,
+        month_year: suggMonthFilter,
+        strategy: suggStrategyFilter,
+        time_slot: suggSlotFilter,
+        platform: suggPlatformFilter,
+        search: suggSearchQuery
+      });
+      const res = await fetch(`/api/suggestions?${params.toString()}`);
+      const data = await res.json();
+      if (data.success) {
+        suggestionsList = data.suggestions || [];
+        suggestionsStats = data.stats || suggestionsStats;
+        topReceiverSuggestions = data.top_receivers || [];
+        if (data.available_distances?.length) {
+          availableDistances = data.available_distances;
+        }
+      } else {
+        showToast(data.error || 'Failed to load suggestions', 'error');
+      }
+    } catch (err) {
+      console.error('Error fetching suggestions:', err);
+    } finally {
+      isLoadingSuggestions = false;
+    }
+  }
+
+  function selectSuggestionDistance(dist) {
+    suggDistanceFilter = dist;
+    fetchSuggestions();
+  }
+
+  function selectSuggestionStrategy(strat) {
+    suggStrategyFilter = strat;
+    fetchSuggestions();
+  }
+
+  function openQuickOrder(item) {
+    quickOrderRestaurant = item;
+    quickOrderMonth = suggMonthFilter || currentMonth;
+    quickOrderSlot = item.latest_history?.time_slot || 'Lunch';
+    quickOrderPlatform = (item.platform === 'Both' || !item.platform) ? 'Swiggy' : item.platform;
+    
+    if (item.latest_history?.receiver_name) {
+      quickOrderReceiverName = item.latest_history.receiver_name;
+      quickOrderReceiverPhone = item.latest_history.receiver_phone || '';
+      quickOrderReceiverAddress = item.latest_history.receiver_address || '';
+      const matchedRec = receivers.find(r => r.name === quickOrderReceiverName);
+      quickOrderReceiverId = matchedRec ? String(matchedRec.id) : '';
+    } else if (topReceiverSuggestions.length > 0) {
+      const topRec = topReceiverSuggestions[0];
+      quickOrderReceiverName = topRec.name;
+      quickOrderReceiverPhone = topRec.phone || '';
+      quickOrderReceiverAddress = topRec.address || '';
+      quickOrderReceiverId = topRec.id ? String(topRec.id) : '';
+    } else {
+      quickOrderReceiverId = '';
+      quickOrderReceiverName = '';
+      quickOrderReceiverPhone = '';
+      quickOrderReceiverAddress = '';
+    }
+    quickOrderNotes = '';
+    showQuickOrderModal = true;
+  }
+
+  function handleQuickReceiverSelect(e) {
+    const rId = e.target.value;
+    quickOrderReceiverId = rId;
+    if (rId) {
+      const selected = receivers.find(r => String(r.id) === String(rId));
+      if (selected) {
+        quickOrderReceiverName = selected.name;
+        quickOrderReceiverPhone = selected.phone || '';
+        quickOrderReceiverAddress = selected.address || '';
+      }
+    } else {
+      quickOrderReceiverName = '';
+      quickOrderReceiverPhone = '';
+      quickOrderReceiverAddress = '';
+    }
+  }
+
+  function applyTopReceiver(rec) {
+    quickOrderReceiverId = rec.id ? String(rec.id) : '';
+    quickOrderReceiverName = rec.name;
+    quickOrderReceiverPhone = rec.phone || '';
+    quickOrderReceiverAddress = rec.address || '';
+    showToast(`Selected receiver: ${rec.name}`);
+  }
+
+  async function submitQuickOrder() {
+    if (!quickOrderRestaurant) return;
+    isSubmittingQuickOrder = true;
+    try {
+      const res = await fetch('/api/orders/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          restaurant_id: quickOrderRestaurant.id,
+          month_year: quickOrderMonth,
+          platform_used: quickOrderPlatform,
+          time_slot: quickOrderSlot,
+          notes: quickOrderNotes,
+          receiver_id: quickOrderReceiverId ? parseInt(quickOrderReceiverId, 10) : null,
+          receiver_name: quickOrderReceiverName,
+          receiver_phone: quickOrderReceiverPhone,
+          receiver_address: quickOrderReceiverAddress,
+          action: 'toggle'
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`Ordered: ${quickOrderRestaurant.name} for ${quickOrderMonth}!`);
+        showQuickOrderModal = false;
+        await Promise.all([fetchSuggestions(), loadAllData()]);
+      } else {
+        showToast(data.error || 'Failed to place order', 'error');
+      }
+    } catch (e) {
+      showToast('Error placing order', 'error');
+    } finally {
+      isSubmittingQuickOrder = false;
+    }
+  }
+
+  function copyDispatchText(item) {
+    const recName = item.latest_history?.receiver_name || (topReceiverSuggestions[0]?.name) || 'Not Assigned';
+    const recPhone = item.latest_history?.receiver_phone || (topReceiverSuggestions[0]?.phone) || 'N/A';
+    const recAddr = item.latest_history?.receiver_address || (topReceiverSuggestions[0]?.address) || 'N/A';
+    
+    const text = `🍽️ RESTAURANT: ${item.name}
+📍 ZONE: ${item.zone_name} | DISTANCE: ${item.distance}
+🏢 ADDRESS: ${item.address || 'Kolkata'}
+🛵 PLATFORM: ${item.platform}
+🕒 TIME SLOT: ${item.latest_history?.time_slot || 'Lunch'}
+👤 RECEIVER: ${recName} (${recPhone})
+📦 DELIVERY ADDRESS: ${recAddr}
+${item.swiggy_url ? `🔗 SWIGGY: ${item.swiggy_url}` : ''}
+${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
+
+    copyText(`sugg-dispatch-${item.id}`, text);
+    showToast('Copied full dispatch details to clipboard!');
+  }
+
   async function fetchZones() {
     try {
       const res = await fetch(`/api/zones?month_year=${currentMonth}`);
@@ -250,11 +463,22 @@
     } catch (e) { console.error(e); }
   }
 
+  let receiverMonthFilter = currentMonth;
+  let availableReceiverMonths = [];
+
   async function fetchReceivers() {
     try {
-      const res = await fetch('/api/receivers');
+      const url = receiverMonthFilter && receiverMonthFilter !== 'all' 
+        ? `/api/receivers?month_year=${receiverMonthFilter}` 
+        : `/api/receivers`;
+      const res = await fetch(url);
       const data = await res.json();
-      if (data.success) receivers = data.receivers;
+      if (data.success) {
+        receivers = data.receivers;
+        if (data.available_months && data.available_months.length > 0) {
+          availableReceiverMonths = data.available_months;
+        }
+      }
     } catch (e) { console.error(e); }
   }
 
@@ -279,20 +503,63 @@
     } catch (e) { console.error(e); }
   }
 
-  // Reactive Derived Lists
+  // Reactive Derived Lists & Smart Pagination (15 items per page)
+  const PAGE_SIZE = 15;
+
+  let suggPage = 1;
+  let restPage = 1;
+  let historyPage = 1;
+  let zonePage = 1;
+  let recPage = 1;
+
   $: filteredRestaurants = restaurants.filter(r => {
     const q = restSearch.toLowerCase().trim();
     const nameMatch = r.name.toLowerCase().includes(q) || (r.address || '').toLowerCase().includes(q);
     const zoneMatch = restZoneFilter === 'all' || r.zone_id == restZoneFilter;
+    const distMatch = restDistanceFilter === 'all' || (r.distance || '').toLowerCase().trim() === restDistanceFilter.toLowerCase().trim() || (r.distance || '').includes(restDistanceFilter);
     const platMatch = restPlatformFilter === 'all' || r.platform === restPlatformFilter || r.platform === 'Both';
     const sourceMatch = restSourceFilter === 'all' || (restSourceFilter === 'list' ? r.is_seeded : !r.is_seeded);
-    return nameMatch && zoneMatch && platMatch && sourceMatch;
+    return nameMatch && zoneMatch && distMatch && platMatch && sourceMatch;
   });
 
   $: filteredReceivers = receivers.filter(rec => {
     const q = recSearch.toLowerCase().trim();
     return rec.name.toLowerCase().includes(q) || (rec.address || '').toLowerCase().includes(q) || (rec.phone || '').toLowerCase().includes(q);
   });
+
+  // Reactive Paginated Slices
+  $: suggTotalPages = Math.ceil(suggestionsList.length / PAGE_SIZE) || 1;
+  $: paginatedSuggestions = suggestionsList.slice((suggPage - 1) * PAGE_SIZE, suggPage * PAGE_SIZE);
+
+  $: restTotalPages = Math.ceil(filteredRestaurants.length / PAGE_SIZE) || 1;
+  $: paginatedRestaurants = filteredRestaurants.slice((restPage - 1) * PAGE_SIZE, restPage * PAGE_SIZE);
+
+  $: historyTotalPages = Math.ceil(orderHistoryList.length / PAGE_SIZE) || 1;
+  $: paginatedHistory = orderHistoryList.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE);
+
+  $: zoneTotalPages = Math.ceil(zones.length / PAGE_SIZE) || 1;
+  $: paginatedZones = zones.slice((zonePage - 1) * PAGE_SIZE, zonePage * PAGE_SIZE);
+
+  $: recTotalPages = Math.ceil(filteredReceivers.length / PAGE_SIZE) || 1;
+  $: paginatedReceivers = filteredReceivers.slice((recPage - 1) * PAGE_SIZE, recPage * PAGE_SIZE);
+
+  // Auto-reset page to 1 when filters change
+  $: if (restSearch !== undefined || restZoneFilter !== undefined || restPlatformFilter !== undefined || restSourceFilter !== undefined) restPage = 1;
+  $: if (historyMonthFilter !== undefined || historyStatusFilter !== undefined || historyZoneFilter !== undefined || historySlotFilter !== undefined || historySearchQuery !== undefined) historyPage = 1;
+  $: if (suggZoneFilter !== undefined || suggDistanceFilter !== undefined || suggMonthFilter !== undefined || suggStrategyFilter !== undefined || suggSlotFilter !== undefined || suggPlatformFilter !== undefined || suggSearchQuery !== undefined) suggPage = 1;
+  $: if (recSearch !== undefined) recPage = 1;
+
+  function getPageList(current, total) {
+    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+    const pages = [1];
+    if (current > 3) pages.push('...');
+    const start = Math.max(2, current - 1);
+    const end = Math.min(total - 1, current + 1);
+    for (let i = start; i <= end; i++) pages.push(i);
+    if (current < total - 2) pages.push('...');
+    pages.push(total);
+    return pages;
+  }
 
   function copyText(id, text) {
     if (!text) return;
@@ -590,7 +857,14 @@
   function selectAdminTab(tab) {
     activeTab = tab;
     isMobileDrawerOpen = false;
-    if (tab === 'history') fetchOrderHistory();
+    // Instant switch! Fetch on demand if tab hasn't completed background prefetch yet
+    if (tab === 'history' && !loadedTabs.has('history')) {
+      fetchOrderHistory().then(() => loadedTabs.add('history'));
+    } else if (tab === 'suggestions' && !loadedTabs.has('suggestions')) {
+      fetchSuggestions().then(() => loadedTabs.add('suggestions'));
+    } else if (tab === 'receivers' && !loadedTabs.has('receivers')) {
+      fetchReceivers().then(() => loadedTabs.add('receivers'));
+    }
   }
 </script>
 
@@ -622,6 +896,15 @@
       >
         <i class="fa-solid fa-chart-line"></i>
         <span>Overview & Stats</span>
+      </button>
+
+      <button 
+        class="sidebar-item {activeTab === 'suggestions' ? 'active' : ''}" 
+        on:click={() => selectAdminTab('suggestions')}
+      >
+        <i class="fa-solid fa-wand-magic-sparkles" style="color: #ec4899;"></i>
+        <span>Order Suggestion</span>
+        <span class="badge-ai-sparkle">Smart</span>
       </button>
 
       <button 
@@ -690,6 +973,7 @@
         </button>
         <h2 class="page-title">
           {#if activeTab === 'overview'}<i class="fa-solid fa-chart-line"></i> Dashboard Overview
+          {:else if activeTab === 'suggestions'}<i class="fa-solid fa-wand-magic-sparkles" style="color:#ec4899;"></i> Smart Order Suggestions
           {:else if activeTab === 'restaurants'}<i class="fa-solid fa-utensils"></i> Restaurant Manager
           {:else if activeTab === 'history'}<i class="fa-solid fa-clock-rotate-left"></i> Order History & Analytics
           {:else if activeTab === 'zones'}<i class="fa-solid fa-map-location-dot"></i> Kolkata Zones Manager
@@ -789,6 +1073,12 @@
 
         <!-- QUICK ACTION CARDS -->
         <div class="quick-cards-grid" style="margin-top:1.5rem; display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:1.2rem;">
+          <div class="admin-box-card" style="border-color: rgba(236, 72, 153, 0.35); background: linear-gradient(135deg, rgba(236, 72, 153, 0.05), rgba(139, 92, 246, 0.05));">
+            <h3><i class="fa-solid fa-wand-magic-sparkles" style="color:#ec4899;"></i> Smart Order Suggestion</h3>
+            <p style="font-size:0.85rem; color:var(--text-muted); margin:0.4rem 0 1rem 0;">AI suggestions based on Zone & Distance from previous months' history.</p>
+            <button class="btn btn-purple" style="background: linear-gradient(135deg, #ec4899, #8b5cf6); border:none;" on:click={() => selectAdminTab('suggestions')}><i class="fa-solid fa-sparkles"></i> Open Suggestions</button>
+          </div>
+
           <div class="admin-box-card">
             <h3><i class="fa-solid fa-square-plus" style="color:var(--primary-accent)"></i> Quick Add Restaurant</h3>
             <p style="font-size:0.85rem; color:var(--text-muted); margin:0.4rem 0 1rem 0;">Add new food joint to any Kolkata zone instantly.</p>
@@ -814,6 +1104,376 @@
           </div>
         </div>
       </div>
+      {/if}
+
+      <!-- TAB: SMART ORDER SUGGESTIONS -->
+      {#if activeTab === 'suggestions'}
+        <div class="tab-content-animated" style="display:flex; flex-direction:column; gap:1.5rem;">
+          
+          <!-- TOP METRICS SUMMARY ROW -->
+          <div class="suggestions-top-grid">
+            <div class="sugg-metric-card">
+              <div class="sugg-metric-icon" style="background:rgba(59,130,246,0.15); color:#3b82f6;">
+                <i class="fa-solid fa-utensils"></i>
+              </div>
+              <div class="sugg-metric-info">
+                <span class="sugg-metric-title">Matching Joints</span>
+                <span class="sugg-metric-num">
+                  {#if isLoadingSuggestions}
+                    <span class="skeleton-shimmer" style="width:40px; height:24px; display:inline-block;"></span>
+                  {:else}
+                    {suggestionsStats.total_matching}
+                  {/if}
+                </span>
+              </div>
+            </div>
+
+            <div class="sugg-metric-card">
+              <div class="sugg-metric-icon" style="background:rgba(245,158,11,0.15); color:#f59e0b;">
+                <i class="fa-solid fa-trophy"></i>
+              </div>
+              <div class="sugg-metric-info">
+                <span class="sugg-metric-title">Proven Repeat Picks</span>
+                <span class="sugg-metric-num">
+                  {#if isLoadingSuggestions}
+                    <span class="skeleton-shimmer" style="width:40px; height:24px; display:inline-block;"></span>
+                  {:else}
+                    {suggestionsStats.total_proven}
+                  {/if}
+                </span>
+              </div>
+            </div>
+
+            <div class="sugg-metric-card">
+              <div class="sugg-metric-icon" style="background:rgba(16,185,129,0.15); color:#10b981;">
+                <i class="fa-solid fa-seedling"></i>
+              </div>
+              <div class="sugg-metric-info">
+                <span class="sugg-metric-title">Fresh Untapped</span>
+                <span class="sugg-metric-num">
+                  {#if isLoadingSuggestions}
+                    <span class="skeleton-shimmer" style="width:40px; height:24px; display:inline-block;"></span>
+                  {:else}
+                    {suggestionsStats.total_fresh}
+                  {/if}
+                </span>
+              </div>
+            </div>
+
+            <div class="sugg-metric-card">
+              <div class="sugg-metric-icon" style="background:rgba(168,85,247,0.15); color:#a855f7;">
+                <i class="fa-solid fa-calendar-check"></i>
+              </div>
+              <div class="sugg-metric-info">
+                <span class="sugg-metric-title">Pending ({suggMonthFilter})</span>
+                <span class="sugg-metric-num">
+                  {#if isLoadingSuggestions}
+                    <span class="skeleton-shimmer" style="width:40px; height:24px; display:inline-block;"></span>
+                  {:else}
+                    {suggestionsStats.total_pending_this_month}
+                  {/if}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- SMART CONTROL DECK -->
+          <div class="suggestions-control-panel">
+            <!-- ROW 1: PRIMARY FILTERS (ZONE, TARGET MONTH, TIME SLOT, SEARCH) -->
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:1rem; align-items:flex-end;">
+              <div class="form-group" style="margin-bottom:0;">
+                <label style="font-weight:700; font-size:0.82rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">
+                  <i class="fa-solid fa-map-location-dot" style="color:var(--primary-accent);"></i> Select Zone *
+                </label>
+                <select class="form-control" bind:value={suggZoneFilter} on:change={fetchSuggestions}>
+                  <option value="all">📍 All Kolkata Zones ({zones.length})</option>
+                  {#each zones as z}
+                    <option value={z.id}>{z.name}</option>
+                  {/each}
+                </select>
+              </div>
+
+              <div class="form-group" style="margin-bottom:0;">
+                <label style="font-weight:700; font-size:0.82rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">
+                  <i class="fa-solid fa-calendar-days" style="color:var(--amber-accent);"></i> Target Ordering Month
+                </label>
+                <input 
+                  type="month" 
+                  class="form-control" 
+                  bind:value={suggMonthFilter} 
+                  on:change={fetchSuggestions}
+                />
+              </div>
+
+              <div class="form-group" style="margin-bottom:0;">
+                <label style="font-weight:700; font-size:0.82rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">
+                  <i class="fa-solid fa-clock" style="color:var(--emerald-accent);"></i> Preferred Time Slot
+                </label>
+                <select class="form-control" bind:value={suggSlotFilter} on:change={fetchSuggestions}>
+                  <option value="all">All Time Slots</option>
+                  {#each timeSlots as slot}
+                    <option value={slot.slot_name}>{slot.slot_name} ({slot.start_time})</option>
+                  {/each}
+                </select>
+              </div>
+
+              <div class="form-group" style="margin-bottom:0;">
+                <label style="font-weight:700; font-size:0.82rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">
+                  <i class="fa-solid fa-magnifying-glass"></i> Search Joint / Address
+                </label>
+                <input 
+                  type="text" 
+                  class="form-control" 
+                  placeholder="Type name or address..." 
+                  bind:value={suggSearchQuery} 
+                  on:input={fetchSuggestions}
+                />
+              </div>
+            </div>
+
+            <!-- ROW 2: INTERACTIVE DISTANCE CHIPS -->
+            <div>
+              <div class="filter-section-title">
+                <i class="fa-solid fa-route" style="color:var(--primary-accent);"></i> Filter by Distance Range:
+              </div>
+              <div class="distance-chips-container">
+                <button 
+                  class="distance-chip-btn {suggDistanceFilter === 'all' ? 'active' : ''}" 
+                  on:click={() => selectSuggestionDistance('all')}
+                >
+                  <i class="fa-solid fa-arrows-left-right-to-line"></i> All Distances
+                </button>
+                {#each availableDistances as dist}
+                  <button 
+                    class="distance-chip-btn {suggDistanceFilter === dist ? 'active' : ''}" 
+                    on:click={() => selectSuggestionDistance(dist)}
+                  >
+                    <i class="fa-solid fa-location-arrow"></i> {dist}
+                  </button>
+                {/each}
+              </div>
+            </div>
+
+            <!-- ROW 3: STRATEGY TABS -->
+            <div>
+              <div class="filter-section-title">
+                <i class="fa-solid fa-brain" style="color:#ec4899;"></i> Smart Recommendation Mode:
+              </div>
+              <div class="strategy-tabs-bar">
+                <button 
+                  class="strategy-tab-btn {suggStrategyFilter === 'all' ? 'active' : ''}" 
+                  on:click={() => selectSuggestionStrategy('all')}
+                >
+                  <i class="fa-solid fa-wand-magic-sparkles" style="color:#ec4899;"></i> All Smart Matches ({suggestionsStats.total_matching})
+                </button>
+
+                <button 
+                  class="strategy-tab-btn {suggStrategyFilter === 'proven' ? 'active' : ''}" 
+                  on:click={() => selectSuggestionStrategy('proven')}
+                >
+                  <i class="fa-solid fa-trophy" style="color:#f59e0b;"></i> Proven & Frequent ({suggestionsStats.total_proven})
+                </button>
+
+                <button 
+                  class="strategy-tab-btn {suggStrategyFilter === 'fresh' ? 'active' : ''}" 
+                  on:click={() => selectSuggestionStrategy('fresh')}
+                >
+                  <i class="fa-solid fa-seedling" style="color:#3b82f6;"></i> Fresh Untapped ({suggestionsStats.total_fresh})
+                </button>
+
+                <button 
+                  class="strategy-tab-btn {suggStrategyFilter === 'last_month' ? 'active' : ''}" 
+                  on:click={() => selectSuggestionStrategy('last_month')}
+                >
+                  <i class="fa-solid fa-bolt" style="color:#10b981;"></i> Last Month Picks
+                </button>
+              </div>
+            </div>
+
+            <!-- ROW 4: TOP RECEIVER SUGGESTIONS IN THIS ZONE -->
+            {#if topReceiverSuggestions.length > 0}
+              <div class="top-receivers-banner">
+                <div style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; font-weight:700; color:#8b5cf6;">
+                  <i class="fa-solid fa-user-check"></i> Most Frequent Receivers in this Area:
+                </div>
+                <div class="top-receivers-chips">
+                  {#each topReceiverSuggestions as topRec}
+                    <button class="receiver-quick-pill" on:click={() => applyTopReceiver(topRec)} title="Click to quickly preselect this receiver">
+                      <i class="fa-solid fa-user"></i> {topRec.name} <span style="opacity:0.75; font-size:0.75rem;">({topRec.count}x)</span>
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          </div>
+
+          <!-- SUGGESTIONS CARDS GRID -->
+          {#if isLoadingSuggestions}
+            <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(360px, 1fr)); gap:1.25rem;">
+              {#each Array(6) as _}
+                <div class="suggestion-card" style="height:210px; display:flex; flex-direction:column; gap:0.8rem;">
+                  <div class="skeleton-shimmer" style="width:70%; height:24px;"></div>
+                  <div class="skeleton-shimmer" style="width:40%; height:16px;"></div>
+                  <div class="skeleton-shimmer" style="width:100%; height:50px; margin-top:auto;"></div>
+                </div>
+              {/each}
+            </div>
+          {:else if suggestionsList.length === 0}
+            <div class="empty-state-box" style="padding:3.5rem 1.5rem; text-align:center; background:var(--bg-card); border:1px dashed var(--border-color); border-radius:var(--radius-lg);">
+              <i class="fa-solid fa-magnifying-glass-location" style="font-size:3rem; color:var(--text-muted); margin-bottom:1rem; opacity:0.6;"></i>
+              <h3 style="font-size:1.25rem; font-weight:700; margin-bottom:0.5rem;">No Restaurants Found</h3>
+              <p style="color:var(--text-muted); font-size:0.9rem; max-width:450px; margin:0 auto 1.25rem auto;">
+                No restaurants match your selected Zone and Distance ({suggDistanceFilter}). Try selecting another distance tier or clearing filters.
+              </p>
+              <button class="btn btn-outline" on:click={() => { suggZoneFilter = 'all'; suggDistanceFilter = 'all'; suggStrategyFilter = 'all'; fetchSuggestions(); }}>
+                <i class="fa-solid fa-rotate-left"></i> Reset All Filters
+              </button>
+            </div>
+          {:else}
+            <div class="suggestions-grid">
+              {#each paginatedSuggestions as item (item.id)}
+                <div class="suggestion-card card-{item.tag_type}">
+                  <!-- CARD HEADER -->
+                  <div class="sugg-card-header">
+                    <div>
+                      <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                        <h3 class="sugg-rest-name" style="margin:0;">{item.name}</h3>
+                        {#if item.is_seeded || item.is_seeded === 1 || item.is_seeded === true}
+                          <span class="badge-source badge-list">
+                            <i class="fa-solid fa-list-check"></i> LIST
+                          </span>
+                        {:else}
+                          <span class="badge-source badge-extra">
+                            <i class="fa-solid fa-folder-plus"></i> EXTRA
+                          </span>
+                        {/if}
+                      </div>
+                      <div class="sugg-meta-row" style="margin-top:0.35rem;">
+                        <span class="sugg-zone-pill"><i class="fa-solid fa-map-pin"></i> {item.zone_name}</span>
+                        <span class="sugg-dist-pill"><i class="fa-solid fa-route"></i> {item.distance}</span>
+                        {#if item.platform === 'Both'}
+                          <span style="font-size:0.75rem; color:#fc8019; font-weight:700;"><i class="fa-solid fa-bolt"></i> Swiggy & Zomato</span>
+                        {:else if item.platform === 'Swiggy'}
+                          <span style="font-size:0.75rem; color:#fc8019; font-weight:700;">Swiggy Only</span>
+                        {:else if item.platform === 'Zomato'}
+                          <span style="font-size:0.75rem; color:#cb202d; font-weight:700;">Zomato Only</span>
+                        {/if}
+                      </div>
+                    </div>
+
+                    <span class="sugg-badge sugg-badge-{item.tag_type}">
+                      {item.recommendation_tag}
+                    </span>
+                  </div>
+
+                  <!-- ADDRESS -->
+                  {#if item.address}
+                    <p style="font-size:0.8rem; color:var(--text-muted); line-height:1.4; margin:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">
+                      <i class="fa-solid fa-location-dot" style="color:var(--text-muted); opacity:0.75;"></i> {item.address}
+                    </p>
+                  {/if}
+
+                  <!-- HISTORY LOG & INSIGHTS BOX -->
+                  <div class="sugg-history-box">
+                    <div class="sugg-history-header">
+                      <span><i class="fa-solid fa-clock-rotate-left"></i> Ordering History</span>
+                      <span style="font-weight:700; color:{item.history_count > 0 ? 'var(--emerald-accent)' : 'var(--text-muted)'};">
+                        {item.history_count > 0 ? `${item.history_count}x Orders in History` : 'Never Ordered'}
+                      </span>
+                    </div>
+
+                    {#if item.latest_history}
+                      <div style="font-size:0.8rem; color:var(--text-main); display:flex; flex-direction:column; gap:0.2rem;">
+                        <div>
+                          <strong>Last Order:</strong> {item.latest_history.month_year} ({item.latest_history.time_slot || 'Lunch'})
+                          {#if item.latest_history.ordered_at}
+                            <span style="color:var(--text-muted); font-size:0.75rem;"> • {new Date(item.latest_history.ordered_at).toLocaleDateString('en-IN', { day:'numeric', month:'short' })}</span>
+                          {/if}
+                        </div>
+                        {#if item.latest_history.receiver_name}
+                          <div style="color:var(--purple-accent); font-weight:600; font-size:0.78rem;">
+                            <i class="fa-solid fa-user"></i> Receiver: {item.latest_history.receiver_name}
+                            {#if item.latest_history.receiver_phone}
+                              <span style="color:var(--text-muted);"> ({item.latest_history.receiver_phone})</span>
+                            {/if}
+                          </div>
+                        {/if}
+                      </div>
+                    {:else}
+                      <div style="color:var(--text-muted); font-style:italic; font-size:0.78rem;">
+                        ✨ Fresh candidate! No prior orders logged yet.
+                      </div>
+                    {/if}
+                  </div>
+
+                  <!-- ACTIONS ROW -->
+                  <div class="sugg-actions-row">
+                    <button 
+                      class="btn btn-outline" 
+                      style="padding:0.45rem 0.85rem; font-size:0.82rem; display:inline-flex; align-items:center; gap:0.4rem;" 
+                      on:click={() => copyDispatchText(item)} 
+                      title="Copy formatted dispatch info"
+                    >
+                      <i class="fa-solid fa-copy"></i>
+                      <span>Copy Info</span>
+                    </button>
+
+                    <button 
+                      class="btn {item.is_ordered_target_month ? 'btn-outline' : 'btn-primary'}" 
+                      style="padding:0.45rem 1.1rem; font-size:0.85rem; margin-left:auto; font-weight:700; display:inline-flex; align-items:center; gap:0.45rem;"
+                      on:click={() => openQuickOrder(item)}
+                    >
+                      {#if item.is_ordered_target_month}
+                        <i class="fa-solid fa-check" style="color:var(--emerald-accent)"></i> Ordered for {suggMonthFilter}
+                      {:else}
+                        <i class="fa-solid fa-paper-plane"></i> Quick Order
+                      {/if}
+                    </button>
+                  </div>
+                </div>
+              {/each}
+            </div>
+
+            <!-- SUGGESTIONS PAGINATION BAR -->
+            {#if suggTotalPages > 1}
+              <div class="pagination-wrapper">
+                <div class="pagination-info">
+                  Showing <strong>{(suggPage - 1) * PAGE_SIZE + 1}</strong> - <strong>{Math.min(suggPage * PAGE_SIZE, suggestionsList.length)}</strong> of <strong>{suggestionsList.length}</strong> restaurants
+                </div>
+                <div class="pagination-controls">
+                  <button 
+                    class="pagination-btn" 
+                    disabled={suggPage === 1} 
+                    on:click={() => { suggPage--; }} 
+                    title="Previous Page"
+                  >
+                    <i class="fa-solid fa-chevron-left"></i>
+                  </button>
+                  {#each getPageList(suggPage, suggTotalPages) as p}
+                    {#if p === '...'}
+                      <span class="pagination-ellipsis">...</span>
+                    {:else}
+                      <button 
+                        class="pagination-btn {suggPage === p ? 'active' : ''}" 
+                        on:click={() => { suggPage = p; }}
+                      >
+                        {p}
+                      </button>
+                    {/if}
+                  {/each}
+                  <button 
+                    class="pagination-btn" 
+                    disabled={suggPage === suggTotalPages} 
+                    on:click={() => { suggPage++; }} 
+                    title="Next Page"
+                  >
+                    <i class="fa-solid fa-chevron-right"></i>
+                  </button>
+                </div>
+              </div>
+            {/if}
+          {/if}
+        </div>
       {/if}
 
       <!-- TAB: ORDER HISTORY & ANALYTICS -->
@@ -941,7 +1601,7 @@
                 </tr>
               </thead>
               <tbody>
-                {#each orderHistoryList as h (h.id)}
+                {#each paginatedHistory as h (h.id)}
                   <tr>
                     <td>
                       <span class="badge" style="background:var(--input-bg); border:1px solid var(--border-color); color:var(--text-main); font-weight:700;">{h.month_year}</span>
@@ -1019,6 +1679,45 @@
                 {/each}
               </tbody>
             </table>
+
+            <!-- HISTORY PAGINATION BAR -->
+            {#if historyTotalPages > 1}
+              <div class="pagination-wrapper">
+                <div class="pagination-info">
+                  Showing <strong>{(historyPage - 1) * PAGE_SIZE + 1}</strong> - <strong>{Math.min(historyPage * PAGE_SIZE, orderHistoryList.length)}</strong> of <strong>{orderHistoryList.length}</strong> orders
+                </div>
+                <div class="pagination-controls">
+                  <button 
+                    class="pagination-btn" 
+                    disabled={historyPage === 1} 
+                    on:click={() => { historyPage--; }} 
+                    title="Previous Page"
+                  >
+                    <i class="fa-solid fa-chevron-left"></i>
+                  </button>
+                  {#each getPageList(historyPage, historyTotalPages) as p}
+                    {#if p === '...'}
+                      <span class="pagination-ellipsis">...</span>
+                    {:else}
+                      <button 
+                        class="pagination-btn {historyPage === p ? 'active' : ''}" 
+                        on:click={() => { historyPage = p; }}
+                      >
+                        {p}
+                      </button>
+                    {/if}
+                  {/each}
+                  <button 
+                    class="pagination-btn" 
+                    disabled={historyPage === historyTotalPages} 
+                    on:click={() => { historyPage++; }} 
+                    title="Next Page"
+                  >
+                    <i class="fa-solid fa-chevron-right"></i>
+                  </button>
+                </div>
+              </div>
+            {/if}
           {/if}
         </div>
       </div>
@@ -1035,6 +1734,15 @@
           <select class="select-filter" bind:value={restZoneFilter}>
             <option value="all">All Zones ({zones.length})</option>
             {#each zones as z}<option value={z.id}>{z.name}</option>{/each}
+          </select>
+
+          <select class="select-filter" bind:value={restDistanceFilter}>
+            <option value="all">All Distances</option>
+            <option value="A. 0-1">A. 0-1</option>
+            <option value="B. 1-2">B. 1-2</option>
+            <option value="C. 2-3">C. 2-3</option>
+            <option value="D. 3-5">D. 3-5</option>
+            <option value="E. 5-7">E. 5-7</option>
           </select>
 
           <select class="select-filter" bind:value={restPlatformFilter}>
@@ -1062,6 +1770,7 @@
                 <th>ID</th>
                 <th>Restaurant Name</th>
                 <th>Zone</th>
+                <th>Distance</th>
                 <th>Platform</th>
                 <th>Address & Copy</th>
                 <th>Source</th>
@@ -1069,11 +1778,20 @@
               </tr>
             </thead>
             <tbody>
-              {#each filteredRestaurants as r (r.id)}
+              {#each paginatedRestaurants as r (r.id)}
                 <tr>
                   <td>#{r.id}</td>
                   <td><strong>{r.name}</strong></td>
                   <td><span class="count-badge"><i class="fa-solid fa-location-dot"></i> {r.zone_name || 'Zone'}</span></td>
+                  <td>
+                    {#if r.distance}
+                      <span class="badge" style="background:rgba(59,130,246,0.12); color:var(--primary-accent); font-weight:700; border:1px solid rgba(59,130,246,0.25); padding:0.2rem 0.55rem; border-radius:12px; font-size:0.78rem; display:inline-flex; align-items:center; gap:0.3rem; white-space:nowrap;">
+                        <i class="fa-solid fa-route"></i> {r.distance}
+                      </span>
+                    {:else}
+                      <span style="color:var(--text-muted); font-size:0.8rem;">—</span>
+                    {/if}
+                  </td>
                   <td>
                     {#if r.platform === 'Swiggy'}<span class="badge-platform badge-swiggy">Swiggy</span>
                     {:else if r.platform === 'Zomato'}<span class="badge-platform badge-zomato">Zomato</span>
@@ -1109,6 +1827,45 @@
               {/each}
             </tbody>
           </table>
+
+          <!-- RESTAURANTS PAGINATION BAR -->
+          {#if restTotalPages > 1}
+            <div class="pagination-wrapper">
+              <div class="pagination-info">
+                Showing <strong>{(restPage - 1) * PAGE_SIZE + 1}</strong> - <strong>{Math.min(restPage * PAGE_SIZE, filteredRestaurants.length)}</strong> of <strong>{filteredRestaurants.length}</strong> restaurants
+              </div>
+              <div class="pagination-controls">
+                <button 
+                  class="pagination-btn" 
+                  disabled={restPage === 1} 
+                  on:click={() => { restPage--; }} 
+                  title="Previous Page"
+                >
+                  <i class="fa-solid fa-chevron-left"></i>
+                </button>
+                {#each getPageList(restPage, restTotalPages) as p}
+                  {#if p === '...'}
+                    <span class="pagination-ellipsis">...</span>
+                  {:else}
+                    <button 
+                      class="pagination-btn {restPage === p ? 'active' : ''}" 
+                      on:click={() => { restPage = p; }}
+                    >
+                      {p}
+                    </button>
+                  {/if}
+                {/each}
+                <button 
+                  class="pagination-btn" 
+                  disabled={restPage === restTotalPages} 
+                  on:click={() => { restPage++; }} 
+                  title="Next Page"
+                >
+                  <i class="fa-solid fa-chevron-right"></i>
+                </button>
+              </div>
+            </div>
+          {/if}
         </div>
       {/if}
 
@@ -1120,7 +1877,7 @@
         </div>
 
         <div class="zones-crud-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:1rem; margin-top:1rem;">
-          {#each zones as z}
+          {#each paginatedZones as z}
             <div class="admin-box-card" style="display:flex; justify-content:space-between; align-items:center;">
               <div>
                 <h4 style="font-size:1.05rem; font-family:'Outfit', sans-serif;"><i class="fa-solid fa-location-dot" style="color:var(--primary-accent)"></i> {z.name}</h4>
@@ -1130,15 +1887,53 @@
             </div>
           {/each}
         </div>
+
+        <!-- ZONES PAGINATION BAR -->
+        {#if zoneTotalPages > 1}
+          <div class="pagination-wrapper">
+            <div class="pagination-info">
+              Showing <strong>{(zonePage - 1) * PAGE_SIZE + 1}</strong> - <strong>{Math.min(zonePage * PAGE_SIZE, zones.length)}</strong> of <strong>{zones.length}</strong> zones
+            </div>
+            <div class="pagination-controls">
+              <button class="pagination-btn" disabled={zonePage === 1} on:click={() => { zonePage--; }} title="Previous Page">
+                <i class="fa-solid fa-chevron-left"></i>
+              </button>
+              {#each getPageList(zonePage, zoneTotalPages) as p}
+                {#if p === '...'}
+                  <span class="pagination-ellipsis">...</span>
+                {:else}
+                  <button class="pagination-btn {zonePage === p ? 'active' : ''}" on:click={() => { zonePage = p; }}>{p}</button>
+                {/if}
+              {/each}
+              <button class="pagination-btn" disabled={zonePage === zoneTotalPages} on:click={() => { zonePage++; }} title="Next Page">
+                <i class="fa-solid fa-chevron-right"></i>
+              </button>
+            </div>
+          </div>
+        {/if}
       {/if}
 
       <!-- TAB 4: RECEIVERS MANAGER -->
       {#if activeTab === 'receivers'}
-        <div class="admin-toolbar">
-          <div class="search-box" style="flex:1;">
+        <div class="admin-toolbar" style="flex-wrap:wrap; gap:0.75rem;">
+          <div class="search-box" style="flex:1; min-width:240px;">
             <i class="fa-solid fa-magnifying-glass search-icon"></i>
             <input type="text" placeholder="Search receiver name, phone or address..." bind:value={recSearch} />
           </div>
+
+          <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+            <label style="font-size:0.82rem; font-weight:700; color:var(--text-muted); display:flex; align-items:center; gap:0.35rem;">
+              <i class="fa-regular fa-calendar-days" style="color:var(--primary-accent)"></i> Month:
+            </label>
+            <select class="select-filter" bind:value={receiverMonthFilter} on:change={fetchReceivers} style="min-width:180px;">
+              <option value={currentMonth}>Current: {formatMonthHeader(currentMonth)}</option>
+              <option value="all">All Months (All-Time)</option>
+              {#each availableReceiverMonths.filter(m => m !== currentMonth) as m}
+                <option value={m}>{formatMonthHeader(m)} ({m})</option>
+              {/each}
+            </select>
+          </div>
+
           <button class="btn btn-purple" on:click={openAddRec}><i class="fa-solid fa-user-plus"></i> Add Receiver</button>
         </div>
 
@@ -1150,11 +1945,23 @@
                 <th>Name / Label</th>
                 <th>Phone Number</th>
                 <th>Full Address</th>
+                <th>
+                  <div style="display:flex; align-items:center; gap:0.35rem;">
+                    <i class="fa-solid fa-box-open" style="color:var(--primary-accent)"></i>
+                    <span>Orders ({receiverMonthFilter === 'all' ? 'All Months' : formatMonthHeader(receiverMonthFilter)})</span>
+                  </div>
+                </th>
+                <th>
+                  <div style="display:flex; align-items:center; gap:0.35rem;">
+                    <i class="fa-solid fa-receipt" style="color:var(--emerald-accent)"></i>
+                    <span>All-Time Total</span>
+                  </div>
+                </th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {#each filteredReceivers as rec (rec.id)}
+              {#each paginatedReceivers as rec (rec.id)}
                 <tr>
                   <td>#{rec.id}</td>
                   <td>
@@ -1175,13 +1982,31 @@
                       {/if}
                     </div>
                   </td>
-                  <td style="max-width:320px;">
+                  <td style="max-width:280px;">
                     <div style="display:flex; align-items:center; gap:0.4rem;">
-                      <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:280px; font-size:0.82rem;">{rec.address}</span>
+                      <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:240px; font-size:0.82rem;">{rec.address}</span>
                       <button class="btn-copy-inline" on:click={() => copyText(`tbl-rec-addr-${rec.id}`, rec.address)} title="Copy Address">
                         {#if copiedFieldId === `tbl-rec-addr-${rec.id}`}<i class="fa-solid fa-check" style="color:var(--emerald-accent)"></i>{:else}<i class="fa-regular fa-copy"></i>{/if}
                       </button>
                     </div>
+                  </td>
+                  <td>
+                    {#if rec.month_order_count > 0}
+                      <span class="badge" style="background:rgba(59,130,246,0.15); color:var(--primary-accent); font-weight:800; border:1px solid rgba(59,130,246,0.3); padding:0.25rem 0.65rem; border-radius:14px; font-size:0.82rem; display:inline-flex; align-items:center; gap:0.35rem;">
+                        <i class="fa-solid fa-box-open"></i> {rec.month_order_count} Orders
+                      </span>
+                    {:else}
+                      <span style="color:var(--text-muted); font-size:0.8rem; font-weight:600;">0 Orders</span>
+                    {/if}
+                  </td>
+                  <td>
+                    {#if rec.total_order_count > 0}
+                      <span class="badge" style="background:rgba(16,185,129,0.15); color:var(--emerald-accent); font-weight:800; border:1px solid rgba(16,185,129,0.3); padding:0.25rem 0.65rem; border-radius:14px; font-size:0.82rem; display:inline-flex; align-items:center; gap:0.35rem;">
+                        <i class="fa-solid fa-receipt"></i> {rec.total_order_count} Total
+                      </span>
+                    {:else}
+                      <span style="color:var(--text-muted); font-size:0.8rem;">0 Total</span>
+                    {/if}
                   </td>
                   <td>
                     <div style="display:flex; gap:0.3rem;">
@@ -1193,6 +2018,30 @@
               {/each}
             </tbody>
           </table>
+
+          <!-- RECEIVERS PAGINATION BAR -->
+          {#if recTotalPages > 1}
+            <div class="pagination-wrapper">
+              <div class="pagination-info">
+                Showing <strong>{(recPage - 1) * PAGE_SIZE + 1}</strong> - <strong>{Math.min(recPage * PAGE_SIZE, filteredReceivers.length)}</strong> of <strong>{filteredReceivers.length}</strong> receivers
+              </div>
+              <div class="pagination-controls">
+                <button class="pagination-btn" disabled={recPage === 1} on:click={() => { recPage--; }} title="Previous Page">
+                  <i class="fa-solid fa-chevron-left"></i>
+                </button>
+                {#each getPageList(recPage, recTotalPages) as p}
+                  {#if p === '...'}
+                    <span class="pagination-ellipsis">...</span>
+                  {:else}
+                    <button class="pagination-btn {recPage === p ? 'active' : ''}" on:click={() => { recPage = p; }}>{p}</button>
+                  {/if}
+                {/each}
+                <button class="pagination-btn" disabled={recPage === recTotalPages} on:click={() => { recPage++; }} title="Next Page">
+                  <i class="fa-solid fa-chevron-right"></i>
+                </button>
+              </div>
+            </div>
+          {/if}
         </div>
       {/if}
 
@@ -1515,6 +2364,102 @@
         </button>
         <button class="btn btn-primary" on:click={() => showHistoryDetailModal = false}>Close</button>
       </div>
+    </div>
+  </div>
+{/if}
+
+<!-- QUICK ORDER MODAL FROM SUGGESTIONS -->
+{#if showQuickOrderModal && quickOrderRestaurant}
+  <div class="modal-overlay" on:click|self={() => showQuickOrderModal = false}>
+    <div class="modal-card" style="max-width:540px;">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-paper-plane" style="color:var(--primary-accent);"></i> Place Order / Mark Completed</h3>
+        <button class="btn-close" on:click={() => showQuickOrderModal = false}>&times;</button>
+      </div>
+
+      <form on:submit|preventDefault={submitQuickOrder}>
+        <div style="background:var(--input-bg); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:0.85rem; margin-bottom:1rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+              <h4 style="font-size:1.15rem; font-family:'Outfit', sans-serif; margin:0;">{quickOrderRestaurant.name}</h4>
+              {#if quickOrderRestaurant.is_seeded || quickOrderRestaurant.is_seeded === 1 || quickOrderRestaurant.is_seeded === true}
+                <span class="badge-source badge-list"><i class="fa-solid fa-list-check"></i> LIST</span>
+              {:else}
+                <span class="badge-source badge-extra"><i class="fa-solid fa-folder-plus"></i> EXTRA</span>
+              {/if}
+            </div>
+            <span class="sugg-dist-pill"><i class="fa-solid fa-route"></i> {quickOrderRestaurant.distance}</span>
+          </div>
+          <p style="font-size:0.82rem; color:var(--text-muted); margin:0.35rem 0 0 0;"><i class="fa-solid fa-map-pin"></i> {quickOrderRestaurant.zone_name} • {quickOrderRestaurant.address || 'Kolkata'}</p>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.85rem;">
+          <div class="form-group">
+            <label>Target Month *</label>
+            <input type="month" class="form-control" bind:value={quickOrderMonth} required />
+          </div>
+
+          <div class="form-group">
+            <label>Time Slot *</label>
+            <select class="form-control" bind:value={quickOrderSlot} required>
+              {#each timeSlots as slot}
+                <option value={slot.slot_name}>{slot.slot_name} ({slot.start_time} - {slot.end_time})</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Platform Used</label>
+          <select class="form-control" bind:value={quickOrderPlatform}>
+            <option value="Swiggy">Swiggy</option>
+            <option value="Zomato">Zomato</option>
+            <option value="Swiggy/Zomato">Swiggy/Zomato (Both)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Select Saved Receiver (Auto-fills details)</label>
+          <select class="form-control" on:change={handleQuickReceiverSelect} bind:value={quickOrderReceiverId}>
+            <option value="">-- Choose or Enter Manually --</option>
+            {#each receivers as rec}
+              <option value={String(rec.id)}>{rec.name} {rec.phone ? `(${rec.phone})` : ''}</option>
+            {/each}
+          </select>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.85rem;">
+          <div class="form-group">
+            <label>Receiver Name</label>
+            <input type="text" class="form-control" placeholder="e.g. Syed-Jadavpur" bind:value={quickOrderReceiverName} />
+          </div>
+          <div class="form-group">
+            <label>Receiver Phone</label>
+            <input type="text" class="form-control" placeholder="e.g. +91 8101222684" bind:value={quickOrderReceiverPhone} />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Delivery Address</label>
+          <textarea class="form-control" rows="2" placeholder="Full delivery drop address..." bind:value={quickOrderReceiverAddress}></textarea>
+        </div>
+
+        <div class="form-group">
+          <label>Order Notes / Reference (Optional)</label>
+          <input type="text" class="form-control" placeholder="e.g. Awign Order #1042" bind:value={quickOrderNotes} />
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" on:click={() => showQuickOrderModal = false}>Cancel</button>
+          <button type="submit" class="btn btn-primary" disabled={isSubmittingQuickOrder}>
+            {#if isSubmittingQuickOrder}
+              <i class="fa-solid fa-spinner fa-spin"></i> Saving...
+            {:else}
+              <i class="fa-solid fa-check"></i> Confirm & Mark Ordered
+            {/if}
+          </button>
+        </div>
+      </form>
     </div>
   </div>
 {/if}

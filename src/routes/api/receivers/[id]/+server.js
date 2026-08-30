@@ -1,9 +1,9 @@
 import { json } from '@sveltejs/kit';
-import { query } from '$lib/server/db.js';
+import { query, invalidateCache, verifySession } from '$lib/server/db.js';
 
 export async function PUT({ params, request, cookies }) {
   const sessionToken = cookies.get('zomswi_admin_session');
-  if (!sessionToken) {
+  if (!sessionToken || !verifySession(sessionToken)) {
     return json({ success: false, error: 'Unauthorized. Please login as Admin.' }, { status: 401 });
   }
 
@@ -24,6 +24,8 @@ export async function PUT({ params, request, cookies }) {
       [name.trim(), address.trim(), (phone || '').trim(), id]
     );
 
+    invalidateCache();
+
     return json({ success: true, message: 'Receiver updated successfully' });
   } catch (err) {
     console.error('Error updating receiver:', err);
@@ -33,12 +35,13 @@ export async function PUT({ params, request, cookies }) {
 
 export async function DELETE({ params, cookies }) {
   const sessionToken = cookies.get('zomswi_admin_session');
-  if (!sessionToken) {
+  if (!sessionToken || !verifySession(sessionToken)) {
     return json({ success: false, error: 'Unauthorized. Please login as Admin.' }, { status: 401 });
   }
   try {
     const { id } = params;
     await query(`DELETE FROM order_receiver WHERE id = ?`, [id]);
+    invalidateCache();
     return json({ success: true, message: 'Receiver deleted successfully' });
   } catch (err) {
     console.error('Error deleting receiver:', err);

@@ -1,9 +1,9 @@
 import { json } from '@sveltejs/kit';
-import { query } from '$lib/server/db.js';
+import { query, invalidateCache, verifySession } from '$lib/server/db.js';
 
 export async function PUT({ params, request, cookies }) {
   const sessionToken = cookies.get('zomswi_admin_session');
-  if (!sessionToken) {
+  if (!sessionToken || !verifySession(sessionToken)) {
     return json({ success: false, error: 'Unauthorized. Please login as Admin.' }, { status: 401 });
   }
 
@@ -24,6 +24,9 @@ export async function PUT({ params, request, cookies }) {
        WHERE id = ?`,
       [zone_id, name, platform, distance, address, swiggy_url, zomato_url, id]
     );
+
+    invalidateCache();
+
     return json({ success: true, message: 'Restaurant updated successfully' });
   } catch (err) {
     return json({ success: false, error: err.message }, { status: 500 });
@@ -32,7 +35,7 @@ export async function PUT({ params, request, cookies }) {
 
 export async function DELETE({ params, cookies }) {
   const sessionToken = cookies.get('zomswi_admin_session');
-  if (!sessionToken) {
+  if (!sessionToken || !verifySession(sessionToken)) {
     return json({ success: false, error: 'Unauthorized. Please login as Admin.' }, { status: 401 });
   }
   try {
@@ -46,6 +49,9 @@ export async function DELETE({ params, cookies }) {
     }
 
     await query('DELETE FROM restaurants WHERE id = ?', [id]);
+
+    invalidateCache();
+
     return json({ success: true, message: 'Restaurant deleted successfully' });
   } catch (err) {
     return json({ success: false, error: err.message }, { status: 500 });
