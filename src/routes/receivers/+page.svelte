@@ -328,7 +328,7 @@
           <!-- FULL ADDRESS WITH COPY BUTTON -->
           <div class="rec-row rec-address-box" style="margin-top:0.4rem; padding:0.6rem 0.8rem;">
             <span class="rec-address" style="font-size:0.85rem;">
-              <i class="fa-solid fa-location-dot" style="color:var(--swiggy-color)"></i> {rec.address}
+              <i class="fa-solid fa-location-dot" style="color:var(--swiggy-color)"></i> {rec.address || 'N/A'}
             </span>
             {#if $isAdmin}
               <button 

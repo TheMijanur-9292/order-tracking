@@ -1,6 +1,7 @@
 /* CSS Design Tokens for Light Mode (DEFAULT) */
 :root, [data-theme="light"] {
   --bg-dark: #f8fafc;
+  --bg-body: #f8fafc;
   --bg-card: #ffffff;
   --bg-card-hover: #f1f5f9;
   --bg-glass: rgba(255, 255, 255, 0.85);
@@ -36,6 +37,7 @@
 /* Dark Mode Overrides */
 [data-theme="dark"] {
   --bg-dark: #090d16;
+  --bg-body: #090d16;
   --bg-card: #131b2e;
   --bg-card-hover: #1b2640;
   --bg-glass: rgba(19, 27, 46, 0.85);
@@ -70,7 +72,7 @@
 }
 
 html, body {
-  overflow-x: hidden !important;
+  overflow-x: clip !important;
   max-width: 100% !important;
   width: 100% !important;
 }
@@ -89,6 +91,7 @@ body {
 .app-header {
   background: var(--bg-glass);
   backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--border-color);
   position: fixed !important;
   top: 0 !important;
@@ -96,7 +99,7 @@ body {
   right: 0 !important;
   width: 100% !important;
   z-index: 1000 !important;
-  padding: 0.85rem 1.5rem;
+  padding: 0.7rem 1.5rem;
   transition: var(--transition);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
 }
@@ -343,10 +346,10 @@ body {
 .main-container {
   max-width: 1350px;
   margin: 0 auto;
-  padding: 135px 1.5rem 1.5rem 1.5rem !important;
+  padding: var(--header-offset, 118px) 1.5rem 1.5rem 1.5rem !important;
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 0.75rem;
 }
 
 /* METRICS CARDS */
@@ -937,7 +940,7 @@ select option {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 1rem;
+  margin-bottom: 0.75rem;
   flex-wrap: wrap;
   gap: 0.5rem;
 }
@@ -947,6 +950,24 @@ select option {
   font-size: 1.25rem;
   font-weight: 600;
   color: var(--text-main);
+}
+
+.section-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: nowrap;
+}
+
+.section-action-pill {
+  padding: 0.32rem 0.68rem !important;
+  font-size: 0.78rem !important;
+  border-radius: 20px !important;
+  white-space: nowrap !important;
+  height: 32px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  box-sizing: border-box !important;
 }
 
 .count-badge {
@@ -1724,7 +1745,7 @@ select option {
   }
 
   .admin-content {
-    padding: 0.85rem 0.65rem !important;
+    padding: 0.85rem 0.65rem 110px 0.65rem !important;
     gap: 1rem !important;
   }
 
@@ -1869,13 +1890,30 @@ select option {
 
   .section-header {
     flex-direction: column;
-    align-items: flex-start;
-    gap: 0.5rem;
+    align-items: stretch;
+    gap: 0.45rem;
+    margin-bottom: 0.65rem;
   }
 
   .section-header h3 {
-    font-size: 1.1rem;
-    line-height: 1.35;
+    font-size: 1.05rem;
+    line-height: 1.3;
+  }
+
+  .section-header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.35rem;
+    width: 100%;
+    flex-wrap: nowrap;
+  }
+
+  .section-action-pill {
+    padding: 0.26rem 0.5rem !important;
+    font-size: 0.72rem !important;
+    height: 30px !important;
+    flex-shrink: 0;
   }
 
   .restaurants-grid,
@@ -2299,14 +2337,17 @@ select option {
   flex-shrink: 0;
 }
 
+@media (max-width: 640px) {
   .app-header {
     padding: 0.5rem 0.65rem !important;
   }
 
   .main-container {
-    padding-top: 145px !important;
+    padding-top: var(--header-offset, 110px) !important;
     padding-left: 0.65rem !important;
     padding-right: 0.65rem !important;
+    padding-bottom: 110px !important;
+    gap: 0.55rem !important;
   }
 
   .header-container {
@@ -2355,7 +2396,7 @@ select option {
   .metrics-grid {
     grid-template-columns: repeat(2, 1fr);
     gap: 0.4rem;
-    margin-bottom: 0.6rem;
+    margin-bottom: 0 !important;
   }
 
   .metric-card {
@@ -2380,8 +2421,8 @@ select option {
   }
 
   .toolbar {
-    padding: 0.65rem 0.5rem;
-    gap: 0.5rem;
+    padding: 0 !important;
+    gap: 0.45rem;
   }
 
   .filter-group {
@@ -2468,9 +2509,20 @@ select option {
   .modal-card {
     max-width: 94% !important;
     padding: 1.15rem 0.9rem !important;
-    max-height: 88vh;
+    max-height: 86vh;
     overflow-y: auto;
     border-radius: 16px !important;
+  }
+
+  .picker-rec-item {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 0.6rem !important;
+  }
+
+  .picker-rec-item > div:last-child {
+    justify-content: flex-end;
+    width: 100%;
   }
 
   .time-slots-grid {
@@ -2479,7 +2531,7 @@ select option {
   }
 
   .toast {
-    bottom: 1rem;
+    bottom: 4.8rem;
     left: 1rem;
     right: 1rem;
     padding: 0.65rem 1rem;
@@ -2505,7 +2557,7 @@ select option {
   }
 
   /* TABLE HORIZONTAL SCROLL FOR MOBILE */
-  .table-responsive-container, .history-table-wrapper {
+  .table-responsive-container, .history-table-wrapper, .admin-table-wrapper {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     width: 100%;
@@ -3153,6 +3205,142 @@ a:active,
   .pagination-controls {
     justify-content: center;
   }
+}
+
+/* ==========================================================================
+   MOBILE APP BOTTOM QUICK ACTION BAR
+   ========================================================================== */
+.mobile-bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  min-height: 64px;
+  height: auto;
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 6px 0.35rem calc(8px + env(safe-area-inset-bottom, 0px)) 0.35rem;
+  z-index: 999;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08);
+  box-sizing: border-box;
+}
+
+[data-theme="dark"] .mobile-bottom-nav {
+  background: rgba(19, 27, 46, 0.94);
+  border-top-color: var(--border-color);
+  box-shadow: 0 -4px 25px rgba(0, 0, 0, 0.4);
+}
+
+.bottom-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none !important;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 4px 2px;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.bottom-nav-item:focus,
+.bottom-nav-item:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.bottom-nav-item:active {
+  transform: scale(0.92);
+}
+
+.bottom-nav-item .nav-icon-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  line-height: 1;
+  transition: all 0.2s ease;
+}
+
+.bottom-nav-item .nav-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0.1px;
+  white-space: nowrap;
+  overflow: visible;
+  transition: color 0.2s ease;
+}
+
+.bottom-nav-item.active,
+.bottom-nav-item.active .nav-label {
+  color: var(--primary-accent) !important;
+  font-weight: 700;
+}
+
+.bottom-nav-item:hover {
+  color: var(--primary-accent);
+}
+
+/* PROMINENT SPECIAL CENTER ACTION (e.g. + Add Restaurant) */
+.bottom-nav-item.prominent-action {
+  margin-top: -18px;
+}
+
+.bottom-nav-item.prominent-action .prominent-circle {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #2563eb, #3b82f6);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.45);
+  border: 3px solid var(--bg-card);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease;
+}
+
+[data-theme="dark"] .bottom-nav-item.prominent-action .prominent-circle {
+  border-color: #131b2e;
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.5);
+}
+
+.bottom-nav-item.prominent-action:hover .prominent-circle,
+.bottom-nav-item.prominent-action:active .prominent-circle {
+  transform: scale(1.08);
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.6);
+}
+
+.bottom-nav-item.prominent-action .nav-label {
+  margin-top: 2px;
+  font-weight: 700;
+  color: var(--primary-accent);
+}
+
+/* Extra bottom spacing so content is never blocked by bottom bar */
+.main-container,
+.admin-content,
+.admin-page-container {
+  padding-bottom: 110px !important;
 }
 
 

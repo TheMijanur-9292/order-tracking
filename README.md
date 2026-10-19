@@ -19,22 +19,29 @@ npm install
 ```
 
 ### 2. Configure Environment Variables
-Create or edit `.env` in the root directory:
+Create or edit `.env` in the root directory (see `.env.example`):
 
 ```env
-# Port Configuration
-PORT=3045
-
-# Database Configuration (Neon Cloud PostgreSQL or Leave blank for local SQLite fallback)
+# Database Configuration (Neon Cloud PostgreSQL, or leave blank for local SQLite fallback)
 DATABASE_URL=
 
-# Admin Authentication Credentials
+# Admin Authentication Credentials (used to seed the first admin user)
 ADMIN_EMAIL=
 ADMIN_PASSWORD=
-AUTH_SALT=zomswi_salt_2026
+
+# Secret used to sign admin session cookies — use a long random string
+SESSION_SECRET=
+
+# Only needed if you have admin users whose passwords were hashed by older versions
+AUTH_SALT=
 ```
 
-*(Note: If `DATABASE_URL` is left empty, the application automatically uses a local `data.db` SQLite database).*
+Generate a secret with:
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+*(Note: If `DATABASE_URL` is left empty, the application uses a local `data.db` SQLite database. This only works locally — on Vercel, `DATABASE_URL` is required.)*
 
 ---
 
@@ -45,12 +52,15 @@ AUTH_SALT=zomswi_salt_2026
 npm run dev
 ```
 
-### Production Build & Start
+### Production Build & Preview
 ```bash
 npm run build
-npm start
+npm run preview
 ```
 
 Access in your browser at:
-- **Public Tracker:** [http://localhost:3045](http://localhost:3045)
-- **Admin Workspace:** [http://localhost:3045/admin](http://localhost:3045/admin)
+- **Public Tracker:** [http://localhost:3058](http://localhost:3058)
+- **Admin Workspace:** [http://localhost:3058/admin](http://localhost:3058/admin)
+
+### Deploying
+The app uses `@sveltejs/adapter-vercel`. Set `DATABASE_URL`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `SESSION_SECRET` in the Vercel project's environment variables.

@@ -7,59 +7,143 @@ import crypto from 'crypto';
 
 dotenv.config();
 
+// ---------- Password hashing ----------
+// New format: pbkdf2_sha512$<iterations>$<saltHex>$<hashHex> (per-user random salt).
+// Legacy format: bare hex hash using the global AUTH_SALT with 1000 iterations (still verified, rehashed on login).
+const PBKDF2_ITERATIONS = 210000;
+
 export function hashPassword(password) {
-  const salt = process.env.AUTH_SALT || 'zomswi_salt_2026';
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, 64, 'sha512').toString('hex');
+  return `pbkdf2_sha512$${PBKDF2_ITERATIONS}$${salt}$${hash}`;
+}
+
+function legacyHash(password) {
+  const salt = process.env.AUTH_SALT;
+  if (!salt) return null;
   return crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
 }
 
-export function verifyPassword(password, hash) {
-  if (!password || !hash) return false;
-  const newHash = hashPassword(password);
+function safeHexEqual(a, b) {
   try {
-    return crypto.timingSafeEqual(Buffer.from(newHash, 'hex'), Buffer.from(hash, 'hex'));
+    const bufA = Buffer.from(a, 'hex');
+    const bufB = Buffer.from(b, 'hex');
+    return bufA.length === bufB.length && bufA.length > 0 && crypto.timingSafeEqual(bufA, bufB);
   } catch (e) {
     return false;
   }
 }
 
+export function verifyPassword(password, hash) {
+  if (!password || !hash) return false;
+  if (hash.startsWith('pbkdf2_sha512$')) {
+    const [, iterStr, salt, expected] = hash.split('$');
+    const iterations = parseInt(iterStr, 10);
+    if (!iterations || !salt || !expected) return false;
+    const actual = crypto.pbkdf2Sync(password, salt, iterations, 64, 'sha512').toString('hex');
+    return safeHexEqual(actual, expected);
+  }
+  const actual = legacyHash(password);
+  return actual ? safeHexEqual(actual, hash) : false;
+}
+
+export function passwordNeedsRehash(hash) {
+  return !hash || !hash.startsWith(`pbkdf2_sha512$${PBKDF2_ITERATIONS}$`);
+}
+
+// ---------- Sessions ----------
+export const SESSION_COOKIE = 'zomswi_admin_session';
+export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days (sliding)
+
+function getSessionSecret() {
+  if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
+  if (process.env.AUTH_SALT) {
+    // Derive a separate key so the password salt is never used directly as the signing key
+    return crypto.createHmac('sha256', process.env.AUTH_SALT).update('zomswi-session-key').digest('hex');
+  }
+  throw new Error('SESSION_SECRET (or AUTH_SALT) must be set in the environment');
+}
+
 export function createSignedSession(user) {
-  const salt = process.env.AUTH_SALT || 'zomswi_salt_2026';
-  const payloadStr = JSON.stringify({ email: user.email, role: user.role, time: Date.now() });
-  const b64Payload = Buffer.from(payloadStr, 'utf-8').toString('base64');
-  const signature = crypto.createHmac('sha256', salt).update(b64Payload).digest('hex');
+  const now = Date.now();
+  const payloadStr = JSON.stringify({
+    email: user.email,
+    role: user.role,
+    iat: now,
+    exp: now + SESSION_MAX_AGE_SECONDS * 1000
+  });
+  const b64Payload = Buffer.from(payloadStr, 'utf-8').toString('base64url');
+  const signature = crypto.createHmac('sha256', getSessionSecret()).update(b64Payload).digest('hex');
   return `${b64Payload}.${signature}`;
 }
 
 export function verifySession(token) {
   if (!token || typeof token !== 'string') return null;
   const parts = token.split('.');
-  const salt = process.env.AUTH_SALT || 'zomswi_salt_2026';
+  if (parts.length !== 2) return null;
 
-  // Support both new HMAC signed tokens and legacy tokens during migration
-  if (parts.length === 2) {
-    const [b64Payload, signature] = parts;
-    const expectedSig = crypto.createHmac('sha256', salt).update(b64Payload).digest('hex');
-    try {
-      if (!crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expectedSig, 'hex'))) {
-        return null;
-      }
-      const payload = JSON.parse(Buffer.from(b64Payload, 'base64').toString('utf-8'));
-      return payload && payload.email ? payload : null;
-    } catch (e) {
-      return null;
-    }
-  } else {
-    // Legacy token fallback
-    try {
-      const payload = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
-      return payload && payload.email ? payload : null;
-    } catch (e) {
-      return null;
-    }
+  const [b64Payload, signature] = parts;
+  try {
+    const expectedSig = crypto.createHmac('sha256', getSessionSecret()).update(b64Payload).digest('hex');
+    if (!safeHexEqual(signature, expectedSig)) return null;
+    const payload = JSON.parse(Buffer.from(b64Payload, 'base64url').toString('utf-8'));
+    if (!payload || !payload.email || !payload.exp || Date.now() > payload.exp) return null;
+    return payload;
+  } catch (e) {
+    return null;
   }
 }
 
+export function sessionCookieOptions() {
+  return {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: SESSION_MAX_AGE_SECONDS
+  };
+}
+
+export function isAdminRequest(cookies) {
+  return Boolean(verifySession(cookies.get(SESSION_COOKIE)));
+}
+
+// ---------- Kolkata (IST) date helpers ----------
+function kolkataParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date);
+  const get = (t) => parts.find((p) => p.type === t).value;
+  return { year: get('year'), month: get('month'), day: get('day') };
+}
+
+export function getKolkataMonthYear(date = new Date()) {
+  const { year, month } = kolkataParts(date);
+  return `${year}-${month}`;
+}
+
+export function getKolkataDateString(date = new Date()) {
+  const { year, month, day } = kolkataParts(date);
+  return `${year}-${month}-${day}`;
+}
+
+// ---------- Error helper ----------
+export function serverError(err, context = 'Request failed') {
+  console.error(`${context}:`, err);
+  return new Response(JSON.stringify({ success: false, error: 'Something went wrong. Please try again.' }), {
+    status: 500,
+    headers: { 'Content-Type': 'application/json' }
+  });
+}
+
 const databaseUrl = process.env.DATABASE_URL;
+
+if (!databaseUrl && process.env.VERCEL) {
+  throw new Error('DATABASE_URL is required on Vercel: the local SQLite fallback cannot write to a read-only serverless filesystem.');
+}
 
 let isPg = false;
 let pgPool = null;
@@ -70,12 +154,11 @@ if (databaseUrl && (databaseUrl.startsWith('postgres://') || databaseUrl.startsW
   pgPool = new pg.Pool({
     connectionString: databaseUrl,
     ssl: { rejectUnauthorized: false },
-    max: 25,
+    max: 20,
     idleTimeoutMillis: 300000,
     connectionTimeoutMillis: 5000
   });
   
-  // Handle unexpected connection errors on idle clients to prevent process crash
   pgPool.on('error', (err) => {
     console.error('Unexpected error on idle pg client:', err);
   });
@@ -94,8 +177,12 @@ export function getCachedData(key) {
   return item.data;
 }
 
+// On serverless (Vercel) each instance has its own cache and invalidation only reaches the local
+// instance, so keep entries short-lived there to bound cross-instance staleness.
+const MAX_CACHE_TTL_MS = process.env.VERCEL ? 3000 : Infinity;
+
 export function setCachedData(key, data, ttlMs = 15000) {
-  cacheMap.set(key, { data, expiry: Date.now() + ttlMs });
+  cacheMap.set(key, { data, expiry: Date.now() + Math.min(ttlMs, MAX_CACHE_TTL_MS) });
 }
 
 export function invalidateCache(pattern) {
@@ -110,7 +197,10 @@ export function invalidateCache(pattern) {
   }
 }
 
-export async function initDb() {
+let dbInitialized = false;
+let dbInitPromise = null;
+
+async function executeDbInit() {
   if (isPg) {
     const client = await pgPool.connect();
     try {
@@ -119,8 +209,11 @@ export async function initDb() {
           id SERIAL PRIMARY KEY,
           name VARCHAR(255) NOT NULL UNIQUE,
           description TEXT,
+          is_visible BOOLEAN DEFAULT true,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+
+        ALTER TABLE zones ADD COLUMN IF NOT EXISTS is_visible BOOLEAN DEFAULT true;
 
         CREATE TABLE IF NOT EXISTS restaurants (
           id SERIAL PRIMARY KEY,
@@ -229,8 +322,6 @@ export async function initDb() {
           await client.query('INSERT INTO users (email, password_hash, role) VALUES ($1, $2, $3)', [adminEmail, hash, 'admin']);
           console.log(`👤 Admin user seeded: ${adminEmail}`);
         }
-      } else {
-        console.warn('⚠️ ADMIN_EMAIL or ADMIN_PASSWORD not configured in .env. Skipping admin seeding.');
       }
 
       // Auto-seed default 5 time slots if empty
@@ -244,6 +335,36 @@ export async function initDb() {
             ('Snacks', '04:00 PM', '07:00 PM', 'fa-mug-hot', '#3b82f6', 3),
             ('Dinner', '07:00 PM', '11:00 PM', 'fa-moon', '#8b5cf6', 4),
             ('Late Night Dinner', '11:00 PM', '06:00 AM', 'fa-star-and-crescent', '#ec4899', 5)
+        `);
+      }
+
+      // Auto-seed default 21 Kolkata receivers if empty
+      const recCheck = await client.query('SELECT COUNT(*) FROM order_receiver');
+      if (parseInt(recCheck.rows[0].count, 10) === 0) {
+        await client.query(`
+          INSERT INTO order_receiver (name, address, phone)
+          VALUES
+            ('Syed- Jadavpur', 'House No. 6/33, Central Park East, Chittaranjan Colony, Baghajatin Colony, Kolkata, West Bengal, India', '+91-8637817268'),
+            ('masu-aliah', 'Aliah University Girls Hostel , Kadampukur Village, Newtown, Kadampukur, Kolkata, West Bengal, India', '+91-9907702572'),
+            ('Asish- Dummy dumdum', 'Dumdum , Rajbari, Dum Dum, Kolkata, West Bengal, India', '+91-6297319292'),
+            ('Deep- Dumdum', 'MAA APARTMENT FLAT NO 4TH FLOOR, 4th Floor, Kamalapur, Kalidham, Rajbari, Dum Dum, Kolkata, West Bengal, India', '+91-7319824670'),
+            ('Avijit - Belarani appartment - Jadavpur', 'Belarani Apartment Ground Floor, Bikramgarh,103/1, Nearest Khabo Cafe, Bikramgarh, Jadavpur, Kolkata, West Bengal', '+91-8116625487'),
+            ('shubham - JU', '2/31, Viveknagar, Garfa, Kolkata, West Bengal, India', '+91-6296479067'),
+            ('Tanmoy - Laketown', 'P-33,Block-B,Sitaram Nivas,Kolkata-89., Sreebhumi, Lake Town, South Dumdum', '+91-9874945699'),
+            ('Nasim- Dumdum', '37/E, Atapara, Sinthee, Baranagar Kol 700050', '+91-9635109747'),
+            ('sarik 8b Ju', 'Jadavpur 8b Busstand , 8B Bus Terminus Road, Jadavpur, Kolkata, West Bengal', '+91-6297319292'),
+            ('Sarik', 'Aliah University Boys Hostel , Aliah University Campus, Action Area I,IIA/27,New Town, Kolkata, West Bengal', '+91-6297319292'),
+            ('Behala - Dummy', 'Behala , 4, Brahmo Samaj Rd, Vidyasagar Park, Behala, Kolkata, West Bengal 700034, India', '+91-6297319292'),
+            ('sarik - alipore zoo', 'Alipore Zoo , Alipur Zoological Garden, Alipore, Kolkata, West Bengal, India', '+91-6297319292'),
+            ('Arif - Imtiaz frnd JU', 'Jadavpur Main Hostel, B Block , Room No 17 (3rd Floor), Beside Jadavpur Police Station , Jadavpur, Kolkata, West Bengal', '+91-8617615800'),
+            ('Imtiaz -Jadavpur', 'Jadavpur University Main Hostel,B-Block,Room No-20, Jadavpur University, Kolkata, West Bengal', '+91-8927058793'),
+            ('mirza au', 'Aliah University Boys Hostel , Aliah University Boys'' Hostel, Action Area II, New Town, Kolkata, West Bengal', '+91-8513092024'),
+            ('Home', 'Centenary Building , RM-27, AJC Bose Rd, Sealdah, Raja Bazar, Kolkata, West Bengal', '+91-9907702572'),
+            ('Santu - Jadavpur', 'C/56/2, Thikana,Ground Floor , Bapuji Nagar, Jadavpur, Kolkata, West Bengal, India', '+91-7719258174'),
+            ('Rajib- Avijit frnd JU', '2/174, Bijoygarh, Jadavpur, Kolkata, West Bengal, India', '+91-8597017200'),
+            ('Noor - South dumdum', '931, jaipur road Kolkata, 700074, Roy Mallick Colony, Bahiragath Colony, Jawpur, Kolkata, West Bengal', '+91-8609839425'),
+            ('Akiz - Jadavpur', 'Jadavpur University Main Hostel A1 Block, Room No 30, 1st Floor, Jadavpur University, Kolkata, West Bengal', '+91-8001322566'),
+            ('Laketown nursing home', 'Laketown Nursing Home , Lake Town Nursing Home, Block B, Sreebhumi, Lake Town, Kolkata, West Bengal', '+91-6297319292')
         `);
       }
     } finally {
@@ -263,6 +384,7 @@ export async function initDb() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
         description TEXT,
+        is_visible INTEGER DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -357,6 +479,9 @@ export async function initDb() {
     `);
 
     try {
+      await sqliteDb.exec(`ALTER TABLE zones ADD COLUMN is_visible INTEGER DEFAULT 1;`);
+    } catch (e) {}
+    try {
       await sqliteDb.exec(`ALTER TABLE restaurants ADD COLUMN is_seeded INTEGER DEFAULT 0;`);
     } catch (e) {}
     try {
@@ -389,7 +514,6 @@ export async function initDb() {
       `);
     }
 
-    // Auto-seed admin user from environment variables (ADMIN_EMAIL & ADMIN_PASSWORD) in SQLite
     const adminEmail = process.env.ADMIN_EMAIL;
     const adminPassword = process.env.ADMIN_PASSWORD;
 
@@ -400,14 +524,23 @@ export async function initDb() {
         await sqliteDb.run('INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)', [adminEmail, hash, 'admin']);
         console.log(`👤 Admin user seeded in SQLite: ${adminEmail}`);
       }
-    } else {
-      console.warn('⚠️ ADMIN_EMAIL or ADMIN_PASSWORD not configured in .env. Skipping SQLite admin seeding.');
     }
   }
+  dbInitialized = true;
+}
+
+export async function initDb() {
+  if (dbInitialized) return;
+  if (!dbInitPromise) {
+    dbInitPromise = executeDbInit();
+  }
+  return dbInitPromise;
 }
 
 export async function query(sql, params = []) {
-  await initDb();
+  if (!dbInitialized) {
+    await initDb();
+  }
   if (isPg) {
     let pgSql = sql;
     let paramIndex = 1;
@@ -430,6 +563,46 @@ export async function query(sql, params = []) {
     } else {
       const res = await sqliteDb.run(sqliteSql, params);
       return [{ changes: res.changes }];
+    }
+  }
+}
+
+// Runs fn(tx) inside a single database transaction; tx(sql, params) has the same contract as query().
+export async function transaction(fn) {
+  if (!dbInitialized) {
+    await initDb();
+  }
+  if (isPg) {
+    const client = await pgPool.connect();
+    const tx = async (sql, params = []) => {
+      let paramIndex = 1;
+      let pgSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
+      if (pgSql.trim().toUpperCase().startsWith('INSERT') && !/RETURNING/i.test(pgSql)) {
+        pgSql += ' RETURNING id';
+      }
+      const result = await client.query(pgSql, params);
+      return result.rows;
+    };
+    try {
+      await client.query('BEGIN');
+      const out = await fn(tx);
+      await client.query('COMMIT');
+      return out;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  } else {
+    await sqliteDb.exec('BEGIN');
+    try {
+      const out = await fn(query);
+      await sqliteDb.exec('COMMIT');
+      return out;
+    } catch (err) {
+      await sqliteDb.exec('ROLLBACK').catch(() => {});
+      throw err;
     }
   }
 }

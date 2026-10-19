@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { query, invalidateCache, verifySession } from '$lib/server/db.js';
+import { query, invalidateCache, verifySession, serverError } from '$lib/server/db.js';
 
 export async function PUT({ params, request, cookies }) {
   const sessionToken = cookies.get('zomswi_admin_session');
@@ -29,7 +29,7 @@ export async function PUT({ params, request, cookies }) {
     return json({ success: true, message: 'Receiver updated successfully' });
   } catch (err) {
     console.error('Error updating receiver:', err);
-    return json({ success: false, error: err.message }, { status: 500 });
+    return serverError(err, '/api/receivers/[id]');
   }
 }
 
@@ -45,6 +45,6 @@ export async function DELETE({ params, cookies }) {
     return json({ success: true, message: 'Receiver deleted successfully' });
   } catch (err) {
     console.error('Error deleting receiver:', err);
-    return json({ success: false, error: err.message }, { status: 500 });
+    return serverError(err, '/api/receivers/[id]');
   }
 }

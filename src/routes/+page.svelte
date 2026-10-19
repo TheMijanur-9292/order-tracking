@@ -75,6 +75,10 @@
   let showImportModal = false;
   let showRestModal = false;
   let showZonesModal = false;
+  let showPlannerModal = false;
+
+  // TODAY'S DISPATCH PLANNER QUEUE
+  let plannedRestIds = [];
 
   // TWO-STEP ORDERING & RECEIVER PICKER MODAL STATE
   let showOrderModal = false;
@@ -102,7 +106,7 @@
   let restZoneId = '';
   let restName = '';
   let restPlatform = 'Both';
-  let restDistance = '2-3 km';
+  let restDistance = 'C. 2-3';
   let restAddress = '';
   let restSwiggyUrl = '';
   let restZomatoUrl = '';
@@ -327,19 +331,132 @@
     ? filteredRestaurants 
     : filteredRestaurants.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
-  $: filteredReceiversForPicker = receiversList.filter(rec => {
-    const q = receiverSearchQuery.toLowerCase().trim();
-    if (!q) return true;
-    return (
-      rec.name.toLowerCase().includes(q) ||
-      (rec.address || '').toLowerCase().includes(q) ||
-      (rec.phone || '').toLowerCase().includes(q)
-    );
-  });
+  function getReceiverMatchScore(rec, rest) {
+    if (!rec || !rest) return 0;
+    const rAddr = (rest.address || '').toLowerCase().trim();
+    const recAddr = (rec.address || '').toLowerCase().trim();
+    const recName = (rec.name || '').toLowerCase().trim();
+    const zName = (rest.zone_name || '').toLowerCase().replace(/^kolkata[-_\s]*/i, '').trim();
+
+    let score = 0;
+    if (rAddr && recAddr) {
+      const normR = rAddr.replace(/[^a-z0-9]/g, '');
+      const normRec = recAddr.replace(/[^a-z0-9]/g, '');
+      if (normR && normRec && (normR.includes(normRec.slice(0, 18)) || normRec.includes(normR.slice(0, 18)))) {
+        score += 100;
+      }
+      const pinR = rAddr.match(/\b700\d{3}\b/);
+      const pinRec = recAddr.match(/\b700\d{3}\b/);
+      if (pinR && pinRec && pinR[0] === pinRec[0]) {
+        score += 50;
+      }
+    }
+    if (zName && zName.length >= 3) {
+      const zParts = zName.split(/[\s/_-]+/).filter(p => p.length >= 3);
+      for (const part of zParts) {
+        if (recName.includes(part) || recAddr.includes(part)) {
+          score += 30;
+        }
+      }
+    }
+    return score;
+  }
+
+  $: filteredReceiversForPicker = receiversList
+    .filter(rec => {
+      const q = receiverSearchQuery.toLowerCase().trim();
+      if (!q) return true;
+      return (
+        rec.name.toLowerCase().includes(q) ||
+        (rec.address || '').toLowerCase().includes(q) ||
+        (rec.phone || '').toLowerCase().includes(q)
+      );
+    })
+    .map(rec => ({
+      ...rec,
+      matchScore: getReceiverMatchScore(rec, selectedRestForOrder)
+    }))
+    .sort((a, b) => b.matchScore - a.matchScore || a.name.localeCompare(b.name));
 
   $: totalAllCount = zonesData.reduce((acc, z) => acc + parseInt(z.total_restaurants || 0, 10), 0);
 
   $: selectedZoneObj = zonesData.find(z => z.id == currentZoneId);
+
+  function getGoogleMapsUrl(queryStr) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((queryStr || '') + ' Kolkata')}`;
+  }
+
+  function copyReceiverFull(rec, keyPrefix = 'recfull') {
+    const fullText = `Name: ${rec.name || ''}\nPhone: ${rec.phone || 'N/A'}\nAddress: ${rec.address || ''}`;
+    copyText(`${keyPrefix}-${rec.id || rec.name}`, fullText);
+  }
+
+  function togglePlanRestaurant(restId) {
+    if (plannedRestIds.includes(restId)) {
+      plannedRestIds = plannedRestIds.filter(id => id !== restId);
+      showToast('Removed from Today\'s Dispatch Plan');
+    } else {
+      plannedRestIds = [...plannedRestIds, restId];
+      showToast('Added to Today\'s Dispatch Plan 📋');
+    }
+  }
+
+  $: plannedRestaurantsList = restaurantsData.filter(r => plannedRestIds.includes(r.id));
+
+  $: todayOrderedRestaurantsList = restaurantsData.filter(r => {
+    if (r.order_status !== 'Ordered' || !r.ordered_at) return false;
+    const d = parseOrderDate(r.ordered_at);
+    if (!d) return false;
+    const todayIST = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const orderIST = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    return todayIST === orderIST;
+  });
+
+  function copyDispatchSheet(mode = 'planned') {
+    const list = mode === 'planned' && plannedRestaurantsList.length > 0
+      ? plannedRestaurantsList
+      : todayOrderedRestaurantsList.length > 0
+        ? todayOrderedRestaurantsList
+        : filteredRestaurants.slice(0, 20);
+
+    if (list.length === 0) {
+      return showToast('No restaurants in list to copy!', 'error');
+    }
+
+    const dateHeader = new Date().toLocaleDateString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    });
+
+    const lines = [
+      `📋 *ZOMSWI KOLKATA DISPATCH SHEET (${dateHeader})*`,
+      `Total Listed: ${list.length} Restaurants`,
+      `----------------------------------------`
+    ];
+
+    list.forEach((r, idx) => {
+      const matchedRec = receiversList
+        .map(rec => ({ ...rec, score: getReceiverMatchScore(rec, r) }))
+        .sort((a, b) => b.score - a.score)[0];
+
+      const recName = r.receiver_name || (matchedRec && matchedRec.score > 0 ? matchedRec.name : 'Receiver');
+      const recPhone = r.receiver_phone || (matchedRec && matchedRec.score > 0 ? matchedRec.phone : '');
+      const recAddr = r.receiver_address || r.address || '';
+      const slotTxt = r.time_slot ? ` [${r.time_slot}]` : '';
+      const statusIcon = r.order_status === 'Ordered' ? '✅' : '⏳';
+
+      lines.push(
+        `${idx + 1}. ${statusIcon} *${r.name}* (${r.zone_name || 'Kolkata'} | ${r.distance || 'C. 2-3'})${slotTxt}`,
+        `   👤 ${recName}${recPhone ? ` (${recPhone})` : ''}`,
+        `   📍 ${recAddr}`
+      );
+    });
+
+    copyText('dispatch-sheet', lines.join('\n'));
+  }
 
   async function selectZone(zId) {
     currentZoneId = zId;
@@ -411,7 +528,7 @@
     }
   }
 
-  // OPEN ORDER WORKFLOW MODAL (STEP 1: SELECT TIME SLOT)
+  // OPEN ORDER WORKFLOW MODAL (STEP 1: SELECT TIME SLOT OR QUICK EDIT EXISTING ORDER)
   function openOrderWorkflowModal(restaurant) {
     if (!$isAdmin) {
       isLoginModalOpen.set(true);
@@ -419,7 +536,10 @@
       return;
     }
     selectedRestForOrder = restaurant;
-    selectedTimeSlot = null;
+    const existingSlot = restaurant.time_slot
+      ? timeSlotsList.find(s => s.slot_name === restaurant.time_slot)
+      : null;
+    selectedTimeSlot = existingSlot || null;
     orderModalStep = 'slot'; // Start at Step 1: Time Slot Selection
     receiverSearchQuery = '';
     showQuickAddRec = false;
@@ -467,7 +587,7 @@
         showOrderModal = false;
         selectedRestForOrder = null;
         selectedTimeSlot = null;
-        refreshData();
+        await Promise.all([refreshData(), fetchReceivers()]);
       } else {
         console.error('API Error updating order:', data.error);
         showToast(data.error || 'Failed to update order status', 'error');
@@ -504,7 +624,7 @@
           const data = await res.json();
           if (data.success) {
             showToast('Order status reset to Pending');
-            refreshData();
+            await Promise.all([refreshData(), fetchReceivers()]);
           }
         } catch (err) {
           showToast('Error resetting status', 'error');
@@ -553,6 +673,36 @@
     }
   }
 
+  let searchInputEl;
+
+  function scrollToTop() {
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }
+
+  function focusSearch() {
+    if (searchInputEl) {
+      searchInputEl.focus();
+      searchInputEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } else if (typeof document !== 'undefined') {
+      const el = document.querySelector('.search-box input');
+      if (el) {
+        el.focus();
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }
+
+  function scrollToStats() {
+    if (typeof document !== 'undefined') {
+      const el = document.querySelector('.metrics-grid');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  }
+
   function copyText(fieldKey, text) {
     if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
@@ -573,9 +723,10 @@
       return;
     }
     editRestId = null;
+    restZoneId = currentZoneId !== 'all' ? currentZoneId : (zonesData[0]?.id || '');
     restName = '';
     restPlatform = 'Both';
-    restDistance = '2-3 km';
+    restDistance = 'C. 2-3';
     restAddress = '';
     restSwiggyUrl = '';
     restZomatoUrl = '';
@@ -595,7 +746,7 @@
     restZoneId = r.zone_id;
     restName = r.name;
     restPlatform = r.platform || 'Both';
-    restDistance = r.distance || '2-3 km';
+    restDistance = r.distance || 'C. 2-3';
     restAddress = r.address || '';
     restSwiggyUrl = r.swiggy_url || '';
     restZomatoUrl = r.zomato_url || '';
@@ -677,7 +828,6 @@
 
   async function uploadExcel() {
     if (!importFile) return showToast('Please select an Excel or CSV file', 'error');
-    if (!importZoneId && !importNewZone.trim()) return showToast('Please select or enter a Zone', 'error');
 
     const formData = new FormData();
     formData.append('excelFile', importFile);
@@ -751,10 +901,12 @@
     }
     return 'Ordered';
   }
+
+  let headerHeight = 104;
 </script>
 
 <!-- HEADER NAVBAR -->
-<header class="app-header">
+<header class="app-header" bind:clientHeight={headerHeight}>
   <div class="header-container">
     <!-- ROW 1: BRAND LOGO + TITLE + RIGHT TOP CONTROLS (THEME & ADMIN LOCK ICON) -->
     <div class="brand">
@@ -809,7 +961,7 @@
 </header>
 
 <!-- MAIN CONTAINER -->
-<main class="main-container">
+<main class="main-container" style="--header-offset: {(headerHeight || 104) + 8}px;">
   <!-- METRICS GRID -->
   <section class="metrics-grid">
     <div class="metric-card card-zones">
@@ -877,6 +1029,7 @@
       </div>
       <input 
         type="text" 
+        bind:this={searchInputEl}
         placeholder="Search restaurant, receiver name, distance, address..." 
         bind:value={searchQuery} 
       />
@@ -922,16 +1075,24 @@
             </button>
 
             {#each zonesData as z}
+              {@const zTot = Number(z.total_restaurants || 0)}
+              {@const zOrd = Number(z.ordered_count || 0)}
+              {@const zPct = zTot > 0 ? Math.round((zOrd / zTot) * 100) : 0}
               <button 
                 type="button" 
                 class="zone-dropdown-item {currentZoneId == z.id ? 'selected' : ''}" 
                 on:click={() => selectZone(z.id)}
               >
-                <span class="item-left">
-                  <i class="fa-solid fa-location-dot"></i>
-                  <span>{z.name}</span>
+                <span class="item-left" style="flex-direction:column; align-items:flex-start; gap:0.2rem; flex:1;">
+                  <span style="display:flex; align-items:center; gap:0.45rem;">
+                    <i class="fa-solid fa-location-dot"></i>
+                    <span>{z.name}</span>
+                  </span>
+                  <span style="width:100%; height:4px; background:rgba(148,163,184,0.2); border-radius:999px; overflow:hidden; display:block;">
+                    <span style="width:{zPct}%; height:100%; background:{zPct === 100 ? '#10b981' : '#f59e0b'}; display:block;"></span>
+                  </span>
                 </span>
-                <span class="tab-badge">{z.ordered_count || 0}/{z.total_restaurants || 0}</span>
+                <span class="tab-badge">{zOrd}/{zTot}</span>
               </button>
             {/each}
           </div>
@@ -1058,12 +1219,27 @@
       <h3>
         {currentZoneId === 'all' ? 'Showing All Kolkata Restaurants' : `Zone: ${zonesData.find(z => z.id == currentZoneId)?.name || 'Selected Zone'}`}
       </h3>
-      <div style="display:flex; align-items:center; gap:0.6rem;">
-        <span class="count-badge">
-          Showing {paginatedRestaurants.length} of {filteredRestaurants.length} listed
+      <div class="section-header-actions">
+        <button
+          type="button"
+          class="btn btn-outline section-action-pill"
+          style="border-color:rgba(168,85,247,0.4); color:var(--purple-accent);"
+          on:click={() => showPlannerModal = true}
+          title="Open Today's WhatsApp/Telegram Dispatch Planner"
+        >
+          <i class="fa-solid fa-clipboard-list"></i> Dispatch Planner
+          {#if plannedRestIds.length > 0}
+            <span class="tab-badge" style="background:var(--purple-accent); color:#fff; margin-left:0.2rem;">{plannedRestIds.length}</span>
+          {:else if todayOrderedRestaurantsList.length > 0}
+            <span class="tab-badge" style="background:var(--emerald-accent); color:#fff; margin-left:0.2rem;">{todayOrderedRestaurantsList.length}</span>
+          {/if}
+        </button>
+
+        <span class="count-badge section-action-pill">
+          Showing {paginatedRestaurants.length} of {filteredRestaurants.length}
         </span>
 
-        <select class="select-filter" style="padding:0.3rem 0.6rem; font-size:0.8rem;" bind:value={pageSize}>
+        <select class="select-filter section-action-pill" bind:value={pageSize}>
           <option value={15}>15 per page</option>
           <option value={30}>30 per page</option>
           <option value={60}>60 per page</option>
@@ -1129,7 +1305,7 @@
                   {/if}
                 </div>
                 <span class="distance-tag">
-                  <i class="fa-solid fa-route"></i> {r.distance || '2-3 km'}
+                  <i class="fa-solid fa-route"></i> {r.distance || 'C. 2-3'}
                 </span>
               </div>
             </div>
@@ -1148,22 +1324,46 @@
                 </div>
               {/if}
 
-              <div class="platform-badges" style="display:flex; align-items:center; gap:0.5rem;">
-                {#if r.platform === 'Swiggy'}
-                  <span class="badge-platform badge-swiggy">Swiggy</span>
-                {:else if r.platform === 'Zomato'}
-                  <span class="badge-platform badge-zomato">Zomato</span>
-                {:else}
-                  <span class="badge-platform badge-swiggy">Swiggy</span>
-                  <span class="badge-platform badge-zomato">Zomato</span>
-                {/if}
+              <div class="platform-badges" style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
+                <div style="display:flex; align-items:center; gap:0.45rem; flex-wrap:wrap;">
+                  {#if r.platform === 'Swiggy'}
+                    <span class="badge-platform badge-swiggy">Swiggy</span>
+                  {:else if r.platform === 'Zomato'}
+                    <span class="badge-platform badge-zomato">Zomato</span>
+                  {:else}
+                    <span class="badge-platform badge-swiggy">Swiggy</span>
+                    <span class="badge-platform badge-zomato">Zomato</span>
+                  {/if}
 
-                <!-- ORDERED TIME SLOT BADGE -->
-                {#if r.order_status === 'Ordered' && r.time_slot}
-                  <span style="font-size:0.75rem; font-weight:700; color:var(--amber-accent); background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.3); padding:0.25rem 0.6rem; border-radius:6px; display:inline-flex; align-items:center; gap:0.3rem;">
-                    <i class="fa-solid fa-clock"></i> {r.time_slot}
-                  </span>
-                {/if}
+                  <!-- ORDERED TIME SLOT BADGE -->
+                  {#if r.order_status === 'Ordered' && r.time_slot}
+                    <span style="font-size:0.75rem; font-weight:700; color:var(--amber-accent); background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.3); padding:0.25rem 0.6rem; border-radius:6px; display:inline-flex; align-items:center; gap:0.3rem;">
+                      <i class="fa-solid fa-clock"></i> {r.time_slot}
+                    </span>
+                  {/if}
+                </div>
+
+                <div style="display:flex; align-items:center; gap:0.35rem;">
+                  <a
+                    href={getGoogleMapsUrl(`${r.name} ${r.zone_name || ''}`)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="btn btn-outline"
+                    style="padding:0.2rem 0.5rem; font-size:0.73rem; border-radius:6px;"
+                    title="View Restaurant on Google Maps"
+                  >
+                    <i class="fa-solid fa-map-location-dot" style="color:var(--primary-accent)"></i> Map
+                  </a>
+                  <button
+                    type="button"
+                    class="btn btn-outline"
+                    style="padding:0.2rem 0.5rem; font-size:0.73rem; border-radius:6px; {plannedRestIds.includes(r.id) ? 'background:rgba(168,85,247,0.15); border-color:var(--purple-accent); color:var(--purple-accent);' : ''}"
+                    on:click={() => togglePlanRestaurant(r.id)}
+                    title="Add/Remove from Today's Dispatch Plan"
+                  >
+                    <i class="fa-solid {plannedRestIds.includes(r.id) ? 'fa-check' : 'fa-plus'}"></i> {plannedRestIds.includes(r.id) ? 'Planned' : 'Plan'}
+                  </button>
+                </div>
               </div>
 
               <!-- SINGLE LINE TRUNCATED RESTAURANT ADDRESS + COPY BUTTON -->
@@ -1173,7 +1373,7 @@
                 <button 
                   class="btn-copy-address" 
                   on:click={() => copyText(`rest-${r.id}`, r.address || 'Kolkata Receiver Address Available')} 
-                  title="Copy Address"
+                  title="Copy Receiver Address"
                 >
                   {#if copiedFieldId === `rest-${r.id}`}
                     <i class="fa-solid fa-check" style="color:var(--emerald-accent)"></i>
@@ -1186,13 +1386,22 @@
               <!-- ASSIGNED RECEIVER INFO BADGE (ONLY VISIBLE FOR LOGGED IN ADMIN) -->
               {#if $isAdmin && r.order_status === 'Ordered' && r.receiver_name}
                 <div class="rec-assigned-badge" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.3); padding:0.45rem 0.75rem; border-radius:var(--radius-sm); margin-top:0.2rem; font-size:0.82rem; color:var(--text-main);">
-                  <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; gap:0.4rem;">
                     <span style="font-weight:700; color:var(--purple-accent); display:flex; align-items:center; gap:0.4rem;">
                       <i class="fa-solid fa-user-check"></i> {r.receiver_name}
                     </span>
-                    {#if r.receiver_phone}
-                      <span style="font-size:0.78rem; font-weight:600; color:var(--emerald-accent);">{$isAdmin ? r.receiver_phone : maskPhoneNumber(r.receiver_phone)}</span>
-                    {/if}
+                    <div style="display:flex; align-items:center; gap:0.35rem;">
+                      {#if r.receiver_phone}
+                        <span style="font-size:0.78rem; font-weight:600; color:var(--emerald-accent);">{$isAdmin ? r.receiver_phone : maskPhoneNumber(r.receiver_phone)}</span>
+                      {/if}
+                      <button
+                        class="btn-copy-inline"
+                        on:click={() => copyText(`rfull-${r.id}`, `Name: ${r.receiver_name}\nPhone: ${r.receiver_phone || 'N/A'}\nAddress: ${r.receiver_address || r.address || ''}`)}
+                        title="Copy Full Receiver Details (Name + Phone + Address)"
+                      >
+                        {#if copiedFieldId === `rfull-${r.id}`}<i class="fa-solid fa-check" style="color:var(--emerald-accent)"></i>{:else}<i class="fa-solid fa-copy"></i>{/if}
+                      </button>
+                    </div>
                   </div>
                   {#if r.receiver_address}
                     <div style="display:flex; align-items:center; gap:0.4rem; margin-top:0.2rem; font-size:0.78rem; color:var(--text-muted);">
@@ -1216,6 +1425,15 @@
                 >
                   <i class="fa-solid fa-circle-check"></i> Ordered
                 </span>
+                {#if $isAdmin}
+                  <button 
+                    class="icon-btn" 
+                    on:click={() => openOrderWorkflowModal(r)} 
+                    title="Quick Edit Time Slot or Assigned Receiver"
+                  >
+                    <i class="fa-solid fa-pen"></i>
+                  </button>
+                {/if}
                 <button 
                   class="icon-btn icon-btn-danger" 
                   on:click={() => resetOrderStatus(r)} 
@@ -1298,10 +1516,57 @@
   </section>
 </main>
 
+<!-- MOBILE APP BOTTOM QUICK ACTION BAR (ROLE SPECIFIC) -->
+<nav class="mobile-bottom-nav">
+  {#if $isAdmin}
+    <!-- ADMIN QUICK ACTIONS -->
+    <button type="button" class="bottom-nav-item active" on:click={scrollToTop} title="Tracker Home">
+      <div class="nav-icon-box"><i class="fa-solid fa-house"></i></div>
+      <span class="nav-label">Home</span>
+    </button>
+
+    <button type="button" class="bottom-nav-item prominent-action" on:click={openAddModal} title="Add Restaurant">
+      <div class="prominent-circle"><i class="fa-solid fa-plus"></i></div>
+      <span class="nav-label">Add New</span>
+    </button>
+
+    <button type="button" class="bottom-nav-item" on:click={() => showImportModal = true} title="Import Excel">
+      <div class="nav-icon-box"><i class="fa-solid fa-file-excel"></i></div>
+      <span class="nav-label">Import</span>
+    </button>
+
+    <a href="/admin" class="bottom-nav-item" title="Admin Workspace Hub">
+      <div class="nav-icon-box"><i class="fa-solid fa-user-shield"></i></div>
+      <span class="nav-label">Admin Hub</span>
+    </a>
+  {:else}
+    <!-- NORMAL / GUEST USER QUICK ACTIONS -->
+    <button type="button" class="bottom-nav-item active" on:click={scrollToTop} title="Home Tracker">
+      <div class="nav-icon-box"><i class="fa-solid fa-compass"></i></div>
+      <span class="nav-label">Explore</span>
+    </button>
+
+    <button type="button" class="bottom-nav-item" on:click={focusSearch} title="Search & Filter">
+      <div class="nav-icon-box"><i class="fa-solid fa-magnifying-glass"></i></div>
+      <span class="nav-label">Search</span>
+    </button>
+
+    <button type="button" class="bottom-nav-item" on:click={scrollToStats} title="Summary Stats">
+      <div class="nav-icon-box"><i class="fa-solid fa-chart-pie"></i></div>
+      <span class="nav-label">Stats</span>
+    </button>
+
+    <button type="button" class="bottom-nav-item" on:click={() => isLoginModalOpen.set(true)} title="Admin Login">
+      <div class="nav-icon-box"><i class="fa-solid fa-lock"></i></div>
+      <span class="nav-label">Admin Login</span>
+    </button>
+  {/if}
+</nav>
+
 <!-- TWO-STEP ORDERING & RECEIVER SELECTION MODAL -->
 {#if showOrderModal}
   <div class="modal-overlay">
-    <div class="modal-card" style="max-width:620px; position:relative;">
+    <div class="modal-card" style="max-width:650px; position:relative;">
       <!-- ANIMATING LOADING OVERLAY FOR ASSIGNING ORDER -->
       {#if isAssigningOrder}
         <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--modal-bg); opacity: 0.94; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1000; border-radius: var(--radius-lg); backdrop-filter: blur(4px);">
@@ -1321,7 +1586,7 @@
             {/if}
           </h3>
           <p style="font-size:0.8rem; color:var(--text-muted); margin-top:0.2rem;">
-            Ordering for: <strong style="color:var(--text-main)">{selectedRestForOrder?.name}</strong> ({formatMonthHeader(currentMonth)})
+            Ordering for: <strong style="color:var(--text-main)">{selectedRestForOrder?.name}</strong> • <span style="color:var(--swiggy-color); font-weight:600;">{selectedRestForOrder?.zone_name || 'Kolkata'}</span> ({formatMonthHeader(currentMonth)})
           </p>
         </div>
         <button class="btn-close" on:click={() => !isAssigningOrder && (showOrderModal = false)} disabled={isAssigningOrder}>&times;</button>
@@ -1339,7 +1604,7 @@
               <button 
                 type="button" 
                 class="btn btn-outline"
-                style="padding:1rem; border-radius:var(--radius-md); border-left:4px solid {slot.color_theme || '#3b82f6'}; justify-content:flex-start; text-align:left; gap:0.75rem;"
+                style="padding:1rem; border-radius:var(--radius-md); border-left:4px solid {slot.color_theme || '#3b82f6'}; {selectedTimeSlot?.slot_name === slot.slot_name ? 'background:rgba(245,158,11,0.12); border-color:var(--amber-accent);' : ''} justify-content:flex-start; text-align:left; gap:0.75rem;"
                 on:click={() => selectTimeSlotStep(slot)}
               >
                 <div style="width:38px; height:38px; border-radius:var(--radius-sm); background:rgba(0,0,0,0.06); display:flex; align-items:center; justify-content:center; font-size:1.1rem; color:{slot.color_theme || '#3b82f6'}; flex-shrink:0;">
@@ -1386,13 +1651,15 @@
           </div>
 
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
-            <span style="font-size:0.82rem; font-weight:700; color:var(--text-muted);">SELECT FROM {receiversList.length} SAVED RECEIVERS</span>
+            <span style="font-size:0.82rem; font-weight:700; color:var(--text-muted);">
+              SELECT FROM {receiversList.length} SAVED RECEIVERS (AUTO-MATCHED TO ZONE)
+            </span>
             <button class="btn btn-outline" style="padding:0.35rem 0.75rem; font-size:0.8rem;" on:click={() => !isAssigningOrder && (showQuickAddRec = true)} disabled={isAssigningOrder}>
               <i class="fa-solid fa-user-plus" style="color:var(--purple-accent)"></i> + Add New Receiver
             </button>
           </div>
 
-          <div class="receiver-picker-scroll" style="max-height:300px; overflow-y:auto; display:flex; flex-direction:column; gap:0.6rem; padding-right:0.3rem;">
+          <div class="receiver-picker-scroll" style="max-height:320px; overflow-y:auto; display:flex; flex-direction:column; gap:0.6rem; padding-right:0.3rem;">
             {#if filteredReceiversForPicker.length === 0}
               <div style="text-align:center; padding:2rem; color:var(--text-muted); font-size:0.9rem;">
                 No receivers match "{receiverSearchQuery}".
@@ -1401,23 +1668,50 @@
               {#each filteredReceiversForPicker as rec (rec.id)}
                 <div 
                   class="picker-rec-item" 
-                  style="background:var(--input-bg); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:0.85rem; display:flex; justify-content:space-between; align-items:center; cursor:pointer; transition:var(--transition); {isAssigningOrder ? 'opacity: 0.6; pointer-events: none;' : ''}"
+                  style="background:{rec.matchScore >= 50 ? 'rgba(16,185,129,0.08)' : 'var(--input-bg)'}; border:1px solid {rec.matchScore >= 50 ? 'rgba(16,185,129,0.45)' : 'var(--border-color)'}; border-radius:var(--radius-md); padding:0.85rem; display:flex; justify-content:space-between; align-items:center; cursor:pointer; transition:var(--transition); {isAssigningOrder ? 'opacity: 0.6; pointer-events: none;' : ''}"
                   on:click={() => !isAssigningOrder && confirmOrderWithReceiver(rec)}
                 >
                   <div style="flex:1; min-width:0; padding-right:0.75rem;">
-                    <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <div style="display:flex; align-items:center; gap:0.45rem; flex-wrap:wrap;">
                       <strong style="font-size:0.95rem; font-family:'Outfit', sans-serif;">{rec.name}</strong>
+                      {#if rec.matchScore >= 50}
+                        <span style="font-size:0.7rem; font-weight:700; background:rgba(16,185,129,0.18); color:var(--emerald-accent); border:1px solid rgba(16,185,129,0.35); padding:0.12rem 0.45rem; border-radius:999px;">
+                          ⚡ Best Match for Zone
+                        </span>
+                      {/if}
                       {#if rec.phone}
                         <span style="font-size:0.8rem; font-weight:700; color:var(--emerald-accent);">{rec.phone}</span>
+                      {/if}
+                      {#if Number(rec.today_order_count || 0) > 0}
+                        <span style="font-size:0.72rem; font-weight:700; padding:0.12rem 0.45rem; border-radius:999px; background:{Number(rec.today_order_count) >= 2 ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.15)'}; color:{Number(rec.today_order_count) >= 2 ? '#ef4444' : '#f59e0b'};" title="Orders assigned to this receiver today">
+                          ⚠️ {rec.today_order_count} Today
+                        </span>
                       {/if}
                     </div>
                     <p style="font-size:0.8rem; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:0.25rem;">
                       <i class="fa-solid fa-location-dot" style="color:var(--swiggy-color)"></i> {rec.address}
                     </p>
                   </div>
-                  <button class="btn btn-purple" style="padding:0.45rem 0.85rem; font-size:0.82rem; flex-shrink:0;" disabled={isAssigningOrder}>
-                    <i class="fa-solid fa-check"></i> Assign
-                  </button>
+                  <div style="display:flex; align-items:center; gap:0.4rem; flex-shrink:0;" on:click|stopPropagation>
+                    <button
+                      type="button"
+                      class="btn btn-outline"
+                      style="padding:0.4rem 0.6rem; font-size:0.78rem;"
+                      on:click={() => copyReceiverFull(rec, 'pickrec')}
+                      title="Copy Name + Phone + Address"
+                    >
+                      {#if copiedFieldId === `pickrec-${rec.id}`}<i class="fa-solid fa-check" style="color:var(--emerald-accent)"></i>{:else}<i class="fa-regular fa-copy"></i>{/if}
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-purple"
+                      style="padding:0.45rem 0.85rem; font-size:0.82rem;"
+                      disabled={isAssigningOrder}
+                      on:click={() => !isAssigningOrder && confirmOrderWithReceiver(rec)}
+                    >
+                      <i class="fa-solid fa-check"></i> Assign
+                    </button>
+                  </div>
                 </div>
               {/each}
             {/if}
@@ -1464,6 +1758,148 @@
           </form>
         {/if}
       {/if}
+    </div>
+  </div>
+{/if}
+
+<!-- ADD / EDIT EXTRA RESTAURANT MODAL -->
+{#if showRestModal}
+  <div class="modal-overlay">
+    <div class="modal-card" style="max-width:540px;">
+      <div class="modal-header">
+        <h3>
+          <i class="fa-solid fa-store" style="color:var(--swiggy-color)"></i>
+          {editRestId ? 'Edit Extra Restaurant' : 'Add New Restaurant'}
+        </h3>
+        <button class="btn-close" on:click={() => showRestModal = false}>&times;</button>
+      </div>
+
+      <form on:submit|preventDefault={saveRestaurant}>
+        <div class="form-group">
+          <label>Select Kolkata Zone *</label>
+          <select class="form-control" bind:value={restZoneId} required>
+            <option value="" disabled>-- Choose Zone --</option>
+            {#each zonesData as z}
+              <option value={z.id}>{z.name}</option>
+            {/each}
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Restaurant Name *</label>
+          <input type="text" class="form-control" placeholder="e.g. Arsalan Restaurant & Caterer" bind:value={restName} required />
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:0.85rem;">
+          <div class="form-group">
+            <label>Platform</label>
+            <select class="form-control" bind:value={restPlatform}>
+              <option value="Both">Both (Swiggy & Zomato)</option>
+              <option value="Swiggy">Swiggy Only</option>
+              <option value="Zomato">Zomato Only</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Distance Tier</label>
+            <select class="form-control" bind:value={restDistance}>
+              <option value="A. 0-1">A. 0-1 km</option>
+              <option value="B. 1-2">B. 1-2 km</option>
+              <option value="C. 2-3">C. 2-3 km</option>
+              <option value="D. 3-5">D. 3-5 km</option>
+              <option value="E. 5-7">E. 5-7 km</option>
+              <option value="F. 7+">F. 7+ km</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Receiver / Delivery Address</label>
+          <textarea class="form-control" rows="2" placeholder="Delivery receiver address for this zone..." bind:value={restAddress}></textarea>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" on:click={() => showRestModal = false}>Cancel</button>
+          <button type="submit" class="btn btn-primary">
+            <i class="fa-solid fa-check"></i> {editRestId ? 'Update Restaurant' : 'Save Restaurant'}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+{/if}
+
+<!-- TODAY'S DISPATCH PLANNER / WHATSAPP SHEET MODAL -->
+{#if showPlannerModal}
+  <div class="modal-overlay">
+    <div class="modal-card" style="max-width:680px;">
+      <div class="modal-header">
+        <div>
+          <h3><i class="fa-solid fa-clipboard-list" style="color:var(--purple-accent)"></i> Today's Dispatch Planner & WhatsApp Sheet</h3>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-top:0.2rem;">
+            Plan restaurants or copy a 1-click formatted WhatsApp/Telegram dispatch sheet with auto-matched receivers.
+          </p>
+        </div>
+        <button class="btn-close" on:click={() => showPlannerModal = false}>&times;</button>
+      </div>
+
+      <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-bottom:1rem;">
+        <button type="button" class="btn btn-purple" on:click={() => copyDispatchSheet('planned')}>
+          <i class="fa-brands fa-whatsapp"></i> Copy Planned List ({plannedRestaurantsList.length})
+        </button>
+        <button type="button" class="btn btn-emerald" on:click={() => copyDispatchSheet('today')}>
+          <i class="fa-solid fa-copy"></i> Copy Today's Ordered ({todayOrderedRestaurantsList.length})
+        </button>
+        {#if plannedRestIds.length > 0}
+          <button type="button" class="btn btn-outline" on:click={() => { plannedRestIds = []; showToast('Cleared planned queue'); }}>
+            <i class="fa-solid fa-trash-can"></i> Clear Plan
+          </button>
+        {/if}
+      </div>
+
+      <div style="max-height:360px; overflow-y:auto; display:flex; flex-direction:column; gap:0.6rem; padding-right:0.25rem;">
+        {#if plannedRestaurantsList.length === 0 && todayOrderedRestaurantsList.length === 0}
+          <div style="text-align:center; padding:2rem; color:var(--text-muted); background:var(--input-bg); border-radius:var(--radius-md);">
+            <i class="fa-solid fa-clipboard-check" style="font-size:2rem; color:var(--purple-accent); margin-bottom:0.5rem;"></i>
+            <p style="font-weight:600; color:var(--text-main);">No restaurants added to Today's Plan yet.</p>
+            <p style="font-size:0.82rem; margin-top:0.25rem;">Click the <strong>+ Plan</strong> button on any restaurant card to queue it for today's dispatch sheet!</p>
+          </div>
+        {:else}
+          {#each (plannedRestaurantsList.length > 0 ? plannedRestaurantsList : todayOrderedRestaurantsList) as item, idx (item.id)}
+            <div style="background:var(--input-bg); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:0.75rem 0.9rem; display:flex; justify-content:space-between; align-items:center; gap:0.75rem;">
+              <div style="min-width:0; flex:1;">
+                <div style="display:flex; align-items:center; gap:0.45rem; flex-wrap:wrap;">
+                  <span style="font-weight:700; color:var(--purple-accent);">#{idx + 1}</span>
+                  <strong style="font-size:0.92rem;">{item.name}</strong>
+                  <span class="distance-tag" style="font-size:0.72rem;">{item.zone_name} • {item.distance}</span>
+                  {#if item.order_status === 'Ordered'}
+                    <span style="font-size:0.72rem; color:var(--emerald-accent); font-weight:700;">✅ Ordered {item.time_slot ? `(${item.time_slot})` : ''}</span>
+                  {/if}
+                </div>
+                <div style="font-size:0.78rem; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:0.2rem;">
+                  📍 {item.receiver_address || item.address}
+                </div>
+              </div>
+              <div style="display:flex; align-items:center; gap:0.4rem;">
+                {#if item.order_status !== 'Ordered' && $isAdmin}
+                  <button type="button" class="btn btn-primary" style="padding:0.35rem 0.65rem; font-size:0.76rem;" on:click={() => { showPlannerModal = false; openOrderWorkflowModal(item); }}>
+                    Order Now
+                  </button>
+                {/if}
+                {#if plannedRestIds.includes(item.id)}
+                  <button type="button" class="btn btn-outline" style="padding:0.35rem 0.55rem; font-size:0.76rem;" on:click={() => togglePlanRestaurant(item.id)} title="Remove from Plan">
+                    <i class="fa-solid fa-xmark"></i>
+                  </button>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        {/if}
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" on:click={() => showPlannerModal = false}>Close</button>
+      </div>
     </div>
   </div>
 {/if}

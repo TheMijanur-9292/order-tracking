@@ -1,9 +1,9 @@
 import { json } from '@sveltejs/kit';
-import { query } from '$lib/server/db.js';
+import { query, invalidateCache, verifySession, serverError } from '$lib/server/db.js';
 
 export async function PUT({ params, request, cookies }) {
   const sessionToken = cookies.get('zomswi_admin_session');
-  if (!sessionToken) {
+  if (!sessionToken || !verifySession(sessionToken)) {
     return json({ success: false, error: 'Unauthorized. Please login as Admin.' }, { status: 401 });
   }
 
@@ -29,22 +29,24 @@ export async function PUT({ params, request, cookies }) {
       ]
     );
 
+    invalidateCache('time_slots');
     return json({ success: true });
   } catch (err) {
-    return json({ success: false, error: err.message }, { status: 500 });
+    return serverError(err, '/api/time-slots/[id]');
   }
 }
 
 export async function DELETE({ params, cookies }) {
   const sessionToken = cookies.get('zomswi_admin_session');
-  if (!sessionToken) {
+  if (!sessionToken || !verifySession(sessionToken)) {
     return json({ success: false, error: 'Unauthorized. Please login as Admin.' }, { status: 401 });
   }
   try {
     const { id } = params;
     await query('DELETE FROM time_slots WHERE id = ?', [id]);
+    invalidateCache('time_slots');
     return json({ success: true });
   } catch (err) {
-    return json({ success: false, error: err.message }, { status: 500 });
+    return serverError(err, '/api/time-slots/[id]');
   }
 }

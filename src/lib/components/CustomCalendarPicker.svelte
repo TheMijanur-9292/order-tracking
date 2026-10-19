@@ -288,14 +288,14 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
     border-radius: 8px;
     border: 1px solid var(--border-color, #e2e8f0);
-    background: var(--bg-body, #f8fafc);
+    background: var(--input-bg, rgba(0, 0, 0, 0.04));
     color: var(--text-main, #334155);
     cursor: pointer;
-    font-size: 0.78rem;
+    font-size: 0.82rem;
     transition: all 0.15s ease;
   }
 
@@ -309,12 +309,12 @@
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
-    padding: 0.3rem 0.65rem;
+    padding: 0.35rem 0.75rem;
     border-radius: 8px;
-    border: 1px solid rgba(37, 99, 235, 0.25);
-    background: rgba(37, 99, 235, 0.08);
-    color: var(--primary-accent, #2563eb);
-    font-size: 0.75rem;
+    border: 1px solid rgba(37, 99, 235, 0.3);
+    background: rgba(37, 99, 235, 0.12);
+    color: var(--primary-accent, #3b82f6);
+    font-size: 0.78rem;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.15s ease;
@@ -337,12 +337,12 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 0.65rem 0.4rem;
+    padding: 0.7rem 0.4rem;
     border-radius: 10px;
     border: 1px solid var(--border-color, #e2e8f0);
-    background: var(--bg-body, #f8fafc);
+    background: var(--input-bg, rgba(0, 0, 0, 0.04));
     color: var(--text-main, #334155);
-    font-size: 0.85rem;
+    font-size: 0.88rem;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
@@ -350,17 +350,17 @@
 
   .month-grid-item:hover {
     border-color: var(--primary-accent, #2563eb);
-    background: rgba(37, 99, 235, 0.08);
+    background: rgba(37, 99, 235, 0.15);
     color: var(--primary-accent, #2563eb);
     transform: translateY(-1px);
   }
 
   .month-grid-item.selected {
-    background: linear-gradient(135deg, #2563eb, #3b82f6);
-    color: #ffffff;
-    border-color: #2563eb;
+    background: linear-gradient(135deg, #2563eb, #3b82f6) !important;
+    color: #ffffff !important;
+    border-color: #2563eb !important;
     font-weight: 700;
-    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
   }
 
   .check-badge {

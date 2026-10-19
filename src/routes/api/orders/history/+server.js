@@ -1,7 +1,11 @@
 import { json } from '@sveltejs/kit';
-import { query } from '$lib/server/db.js';
+import { query, serverError, isAdminRequest } from '$lib/server/db.js';
 
-export async function GET({ url }) {
+export async function GET({ url, cookies }) {
+  if (!isAdminRequest(cookies)) {
+    return json({ success: false, error: 'Unauthorized. Please login as Admin.' }, { status: 401 });
+  }
+
   try {
     const monthYear = url.searchParams.get('month_year') || 'all';
     const status = url.searchParams.get('status') || 'all';
@@ -63,13 +67,14 @@ export async function GET({ url }) {
     if (search) {
       const qPattern = `%${search}%`;
       sql += ` AND (
-        h.restaurant_name LIKE ? OR 
-        h.receiver_name LIKE ? OR 
-        h.receiver_phone LIKE ? OR 
-        h.receiver_address LIKE ? OR 
-        h.notes LIKE ?
+        LOWER(COALESCE(h.restaurant_name, '')) LIKE LOWER(?) OR 
+        LOWER(COALESCE(h.receiver_name, '')) LIKE LOWER(?) OR 
+        LOWER(COALESCE(h.receiver_phone, '')) LIKE LOWER(?) OR 
+        LOWER(COALESCE(h.receiver_address, '')) LIKE LOWER(?) OR 
+        LOWER(COALESCE(h.notes, '')) LIKE LOWER(?) OR
+        LOWER(COALESCE(h.zone_name, '')) LIKE LOWER(?)
       )`;
-      params.push(qPattern, qPattern, qPattern, qPattern, qPattern);
+      params.push(qPattern, qPattern, qPattern, qPattern, qPattern, qPattern);
     }
 
     sql += ` ORDER BY h.ordered_at DESC NULLS LAST, h.created_at DESC`;
@@ -106,6 +111,6 @@ export async function GET({ url }) {
     });
   } catch (err) {
     console.error('Error fetching order_history from database:', err);
-    return json({ success: false, error: err.message }, { status: 500 });
+    return serverError(err, '/api/orders/history');
   }
 }

@@ -449,7 +449,7 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
 
   async function fetchZones() {
     try {
-      const res = await fetch(`/api/zones?month_year=${currentMonth}`);
+      const res = await fetch(`/api/zones?month_year=${currentMonth}&include_hidden=true`);
       const data = await res.json();
       if (data.success) zones = data.zones;
     } catch (e) { console.error(e); }
@@ -503,14 +503,29 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
     } catch (e) { console.error(e); }
   }
 
-  // Reactive Derived Lists & Smart Pagination (15 items per page)
+  // Reactive Derived Lists & Smart Pagination (15 items per page, 30 for zones)
   const PAGE_SIZE = 15;
+  const ZONE_PAGE_SIZE = 30;
 
   let suggPage = 1;
   let restPage = 1;
   let historyPage = 1;
   let zonePage = 1;
   let recPage = 1;
+
+  let zoneSearch = '';
+  let zoneVisibilityFilter = 'all'; // 'all' | 'visible' | 'hidden'
+
+  $: visibleZones = zones.filter(z => z.is_visible !== false && z.is_visible !== 0);
+  $: hiddenZonesCount = zones.length - visibleZones.length;
+
+  $: filteredZones = zones.filter(z => {
+    const q = zoneSearch.toLowerCase().trim();
+    const nameMatch = !q || z.name.toLowerCase().includes(q);
+    const isVis = z.is_visible !== false && z.is_visible !== 0;
+    const visMatch = zoneVisibilityFilter === 'all' || (zoneVisibilityFilter === 'visible' ? isVis : !isVis);
+    return nameMatch && visMatch;
+  });
 
   $: filteredRestaurants = restaurants.filter(r => {
     const q = restSearch.toLowerCase().trim();
@@ -537,8 +552,8 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
   $: historyTotalPages = Math.ceil(orderHistoryList.length / PAGE_SIZE) || 1;
   $: paginatedHistory = orderHistoryList.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE);
 
-  $: zoneTotalPages = Math.ceil(zones.length / PAGE_SIZE) || 1;
-  $: paginatedZones = zones.slice((zonePage - 1) * PAGE_SIZE, zonePage * PAGE_SIZE);
+  $: zoneTotalPages = Math.ceil(filteredZones.length / ZONE_PAGE_SIZE) || 1;
+  $: paginatedZones = filteredZones.slice((zonePage - 1) * ZONE_PAGE_SIZE, zonePage * ZONE_PAGE_SIZE);
 
   $: recTotalPages = Math.ceil(filteredReceivers.length / PAGE_SIZE) || 1;
   $: paginatedReceivers = filteredReceivers.slice((recPage - 1) * PAGE_SIZE, recPage * PAGE_SIZE);
@@ -548,6 +563,7 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
   $: if (historyMonthFilter !== undefined || historyStatusFilter !== undefined || historyZoneFilter !== undefined || historySlotFilter !== undefined || historySearchQuery !== undefined) historyPage = 1;
   $: if (suggZoneFilter !== undefined || suggDistanceFilter !== undefined || suggMonthFilter !== undefined || suggStrategyFilter !== undefined || suggSlotFilter !== undefined || suggPlatformFilter !== undefined || suggSearchQuery !== undefined) suggPage = 1;
   $: if (recSearch !== undefined) recPage = 1;
+  $: if (zoneSearch !== undefined || zoneVisibilityFilter !== undefined) zonePage = 1;
 
   function getPageList(current, total) {
     if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
@@ -699,6 +715,54 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
         } catch (e) { showToast('Error deleting zone', 'error'); }
       }
     );
+  }
+
+  async function toggleZoneVisibility(z) {
+    const currentVis = z.is_visible !== false && z.is_visible !== 0;
+    const newVis = !currentVis;
+    // Optimistic UI update
+    zones = zones.map(item => item.id === z.id ? { ...item, is_visible: newVis } : item);
+    try {
+      const res = await fetch(`/api/zones/${z.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_visible: newVis })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(newVis ? `👁️ "${z.name}" is now Visible on frontend` : `🙈 "${z.name}" is now Hidden from frontend`);
+        await Promise.all([fetchRestaurants(), fetchStats(), fetchSuggestions()]);
+      } else {
+        // Revert on error
+        zones = zones.map(item => item.id === z.id ? { ...item, is_visible: currentVis } : item);
+        showToast(data.error || 'Failed to update visibility', 'error');
+      }
+    } catch (e) {
+      zones = zones.map(item => item.id === z.id ? { ...item, is_visible: currentVis } : item);
+      showToast('Error updating zone visibility', 'error');
+    }
+  }
+
+  async function bulkSetZoneVisibility(makeVisible) {
+    zones = zones.map(item => ({ ...item, is_visible: makeVisible }));
+    try {
+      const res = await fetch('/api/zones', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_visible: makeVisible })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(makeVisible ? '👁️ All zones are now Visible!' : '🙈 All zones are now Hidden!');
+        await Promise.all([fetchZones(), fetchRestaurants(), fetchStats(), fetchSuggestions()]);
+      } else {
+        await fetchZones();
+        showToast(data.error || 'Failed to update zones', 'error');
+      }
+    } catch (e) {
+      await fetchZones();
+      showToast('Error updating zones visibility', 'error');
+    }
   }
 
   // RECEIVERS CRUD
@@ -857,6 +921,10 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
   function selectAdminTab(tab) {
     activeTab = tab;
     isMobileDrawerOpen = false;
+    if (typeof document !== 'undefined') {
+      const mainEl = document.querySelector('.admin-main');
+      if (mainEl) mainEl.scrollTo({ top: 0, behavior: 'smooth' });
+    }
     // Instant switch! Fetch on demand if tab hasn't completed background prefetch yet
     if (tab === 'history' && !loadedTabs.has('history')) {
       fetchOrderHistory().then(() => loadedTabs.add('history'));
@@ -1186,8 +1254,8 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
                   <i class="fa-solid fa-map-location-dot" style="color:var(--primary-accent);"></i> Select Zone *
                 </label>
                 <select class="form-control" bind:value={suggZoneFilter} on:change={fetchSuggestions}>
-                  <option value="all">📍 All Kolkata Zones ({zones.length})</option>
-                  {#each zones as z}
+                  <option value="all">📍 All Visible Zones ({visibleZones.length})</option>
+                  {#each visibleZones as z}
                     <option value={z.id}>{z.name}</option>
                   {/each}
                 </select>
@@ -1559,6 +1627,7 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
             <option value="all">All Statuses</option>
             <option value="Ordered">Ordered Only</option>
             <option value="Pending">Pending Only</option>
+            <option value="Cancelled">Cancelled Only</option>
           </select>
 
           <select class="select-filter" bind:value={historyZoneFilter} on:change={fetchOrderHistory}>
@@ -1624,6 +1693,10 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
                       {#if h.status === 'Ordered'}
                         <span class="badge badge-ordered" style="background:rgba(16,185,129,0.15); color:var(--emerald-accent); border:1px solid rgba(16,185,129,0.3); padding:0.3rem 0.65rem; border-radius:20px; font-weight:700; font-size:0.78rem;">
                           <i class="fa-solid fa-circle-check"></i> Ordered
+                        </span>
+                      {:else if h.status === 'Cancelled'}
+                        <span class="badge" style="background:rgba(239,68,68,0.12); color:#ef4444; border:1px solid rgba(239,68,68,0.3); padding:0.3rem 0.65rem; border-radius:20px; font-weight:700; font-size:0.78rem;">
+                          <i class="fa-solid fa-ban"></i> Cancelled
                         </span>
                       {:else}
                         <span class="badge badge-pending" style="background:rgba(245,158,11,0.15); color:var(--amber-accent); border:1px solid rgba(245,158,11,0.3); padding:0.3rem 0.65rem; border-radius:20px; font-weight:700; font-size:0.78rem;">
@@ -1732,8 +1805,8 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
           </div>
 
           <select class="select-filter" bind:value={restZoneFilter}>
-            <option value="all">All Zones ({zones.length})</option>
-            {#each zones as z}<option value={z.id}>{z.name}</option>{/each}
+            <option value="all">All Visible Zones ({visibleZones.length})</option>
+            {#each visibleZones as z}<option value={z.id}>{z.name}</option>{/each}
           </select>
 
           <select class="select-filter" bind:value={restDistanceFilter}>
@@ -1743,6 +1816,7 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
             <option value="C. 2-3">C. 2-3</option>
             <option value="D. 3-5">D. 3-5</option>
             <option value="E. 5-7">E. 5-7</option>
+            <option value="F. 7+">F. 7+</option>
           </select>
 
           <select class="select-filter" bind:value={restPlatformFilter}>
@@ -1800,10 +1874,20 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
                   </td>
                   <td style="max-width:260px;">
                     <div style="display:flex; align-items:center; gap:0.4rem;">
-                      <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:220px; font-size:0.82rem;">{r.address || 'N/A'}</span>
+                      <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px; font-size:0.82rem;">{r.address || 'N/A'}</span>
                       <button class="btn-copy-inline" on:click={() => copyText(`tbl-rest-${r.id}`, r.address)} title="Copy Address">
                         {#if copiedFieldId === `tbl-rest-${r.id}`}<i class="fa-solid fa-check" style="color:var(--emerald-accent)"></i>{:else}<i class="fa-regular fa-copy"></i>{/if}
                       </button>
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${r.name} ${r.zone_name || ''} Kolkata`)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="btn-copy-inline"
+                        title="Open in Google Maps"
+                        style="color:var(--primary-accent); text-decoration:none;"
+                      >
+                        <i class="fa-solid fa-map-location-dot"></i>
+                      </a>
                     </div>
                   </td>
                   <td>
@@ -1871,19 +1955,119 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
 
       <!-- TAB 3: ZONES MANAGER -->
       {#if activeTab === 'zones'}
-        <div class="admin-toolbar" style="justify-content:space-between;">
-          <h3>Kolkata Zones List ({zones.length})</h3>
-          <button class="btn btn-primary" on:click={openAddZone}><i class="fa-solid fa-plus"></i> Add New Zone</button>
+        <div class="admin-toolbar" style="justify-content:space-between; flex-wrap:wrap; gap:0.85rem;">
+          <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+            <h3 style="margin:0;">Kolkata Zones List ({zones.length})</h3>
+            <span style="font-size:0.78rem; font-weight:700; padding:0.25rem 0.65rem; border-radius:20px; background:rgba(16,185,129,0.14); color:var(--emerald-accent); border:1px solid rgba(16,185,129,0.3); display:inline-flex; align-items:center; gap:0.35rem;">
+              <i class="fa-solid fa-eye"></i> Visible: {visibleZones.length}
+            </span>
+            {#if hiddenZonesCount > 0}
+              <span style="font-size:0.78rem; font-weight:700; padding:0.25rem 0.65rem; border-radius:20px; background:rgba(245,158,11,0.14); color:var(--amber-accent); border:1px solid rgba(245,158,11,0.3); display:inline-flex; align-items:center; gap:0.35rem;">
+                <i class="fa-solid fa-eye-slash"></i> Hidden: {hiddenZonesCount}
+              </span>
+            {/if}
+          </div>
+
+          <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+            <button class="btn btn-outline" style="padding:0.45rem 0.85rem; font-size:0.8rem;" on:click={() => bulkSetZoneVisibility(true)} title="Show all zones on frontend">
+              <i class="fa-solid fa-eye" style="color:var(--emerald-accent);"></i> Show All
+            </button>
+            <button class="btn btn-outline" style="padding:0.45rem 0.85rem; font-size:0.8rem;" on:click={() => bulkSetZoneVisibility(false)} title="Hide all zones from frontend">
+              <i class="fa-solid fa-eye-slash" style="color:var(--amber-accent);"></i> Hide All
+            </button>
+            <button class="btn btn-primary" on:click={openAddZone}>
+              <i class="fa-solid fa-plus"></i> Add New Zone
+            </button>
+          </div>
         </div>
 
-        <div class="zones-crud-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:1rem; margin-top:1rem;">
-          {#each paginatedZones as z}
-            <div class="admin-box-card" style="display:flex; justify-content:space-between; align-items:center;">
-              <div>
-                <h4 style="font-size:1.05rem; font-family:'Outfit', sans-serif;"><i class="fa-solid fa-location-dot" style="color:var(--primary-accent)"></i> {z.name}</h4>
-                <p style="font-size:0.8rem; color:var(--text-muted); margin-top:0.2rem;">{z.total_restaurants || 0} restaurants registered</p>
+        <div class="admin-toolbar" style="margin-top:0.75rem; gap:0.75rem; flex-wrap:wrap;">
+          <div class="search-box" style="flex:1; min-width:220px;">
+            <i class="fa-solid fa-magnifying-glass search-icon"></i>
+            <input type="text" placeholder="Search zone name..." bind:value={zoneSearch} />
+          </div>
+
+          <div style="display:flex; gap:0.4rem;">
+            <button class="btn {zoneVisibilityFilter === 'all' ? 'btn-primary' : 'btn-outline'}" style="padding:0.4rem 0.85rem; font-size:0.8rem;" on:click={() => zoneVisibilityFilter = 'all'}>
+              All ({zones.length})
+            </button>
+            <button class="btn {zoneVisibilityFilter === 'visible' ? 'btn-primary' : 'btn-outline'}" style="padding:0.4rem 0.85rem; font-size:0.8rem;" on:click={() => zoneVisibilityFilter = 'visible'}>
+              <i class="fa-solid fa-eye"></i> Visible ({visibleZones.length})
+            </button>
+            <button class="btn {zoneVisibilityFilter === 'hidden' ? 'btn-primary' : 'btn-outline'}" style="padding:0.4rem 0.85rem; font-size:0.8rem;" on:click={() => zoneVisibilityFilter = 'hidden'}>
+              <i class="fa-solid fa-eye-slash"></i> Hidden ({hiddenZonesCount})
+            </button>
+          </div>
+        </div>
+
+        <div class="zones-crud-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(295px, 1fr)); gap:1rem; margin-top:1rem;">
+          {#each paginatedZones as z (z.id)}
+            {@const isVis = z.is_visible !== false && z.is_visible !== 0}
+            {@const totalR = Number(z.total_restaurants || 0)}
+            {@const ordR = Number(z.ordered_count || 0)}
+            {@const pct = totalR > 0 ? Math.round((ordR / totalR) * 100) : 0}
+            <div 
+              class="admin-box-card" 
+              style="display:flex; flex-direction:column; gap:0.65rem; transition:all 0.2s ease; {!isVis ? 'opacity:0.68; border-style:dashed; background:var(--input-bg);' : 'border-color:rgba(16,185,129,0.28);'}"
+            >
+              <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:0.75rem;">
+                <div style="min-width:0; flex:1;">
+                  <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                    <h4 style="font-size:1.02rem; font-family:'Outfit', sans-serif; margin:0; {!isVis ? 'text-decoration:line-through; color:var(--text-muted);' : ''}">
+                      <i class="fa-solid fa-location-dot" style="color:{isVis ? 'var(--primary-accent)' : 'var(--text-muted)'}"></i> {z.name}
+                    </h4>
+                    {#if isVis}
+                      <span style="font-size:0.68rem; font-weight:700; padding:0.12rem 0.48rem; border-radius:12px; background:rgba(16,185,129,0.14); color:var(--emerald-accent); border:1px solid rgba(16,185,129,0.3);">
+                        ON
+                      </span>
+                    {:else}
+                      <span style="font-size:0.68rem; font-weight:700; padding:0.12rem 0.48rem; border-radius:12px; background:rgba(245,158,11,0.15); color:var(--amber-accent); border:1px solid rgba(245,158,11,0.3);">
+                        HIDDEN
+                      </span>
+                    {/if}
+                  </div>
+                  <p style="font-size:0.8rem; color:var(--text-muted); margin:0.25rem 0 0 0; display:flex; align-items:center; gap:0.45rem;">
+                    <span><strong>{totalR}</strong> Restaurants</span>
+                    <span>•</span>
+                    <span style="color:var(--emerald-accent); font-weight:700;">{ordR} Ordered ({pct}%)</span>
+                  </p>
+                </div>
+
+                <div style="display:flex; align-items:center; gap:0.55rem; flex-shrink:0;">
+                  <button
+                    type="button"
+                    on:click={() => toggleZoneVisibility(z)}
+                    title={isVis ? 'Zone is VISIBLE on frontend (Click to Hide)' : 'Zone is HIDDEN from frontend (Click to Show)'}
+                    style="position:relative; width:46px; height:25px; border-radius:25px; border:none; cursor:pointer; transition:background 0.25s ease; background:{isVis ? '#10b981' : 'rgba(148,163,184,0.45)'}; padding:0; display:inline-flex; align-items:center;"
+                    aria-label="Toggle Zone Visibility"
+                  >
+                    <span
+                      style="position:absolute; top:3px; left:{isVis ? '24px' : '3px'}; width:19px; height:19px; border-radius:50%; background:#ffffff; box-shadow:0 1px 4px rgba(0,0,0,0.25); transition:left 0.22s cubic-bezier(0.4, 0, 0.2, 1); display:flex; align-items:center; justify-content:center; font-size:0.62rem; color:{isVis ? '#10b981' : '#64748b'};"
+                    >
+                      <i class="fa-solid {isVis ? 'fa-eye' : 'fa-eye-slash'}"></i>
+                    </span>
+                  </button>
+
+                  {#if totalR > 0}
+                    <span
+                      class="locked-badge"
+                      title="এই জোনটিতে {totalR}টি রেস্তোরাঁ আছে তাই ডিলিট লক করা। ফ্রন্টএন্ড থেকে লুকাতে চাইলে পাশের সুইচটি অফ করুন।"
+                      style="padding:0.3rem 0.5rem; font-size:0.72rem; cursor:not-allowed;"
+                    >
+                      <i class="fa-solid fa-lock"></i>
+                    </span>
+                  {:else}
+                    <button class="icon-btn icon-btn-danger" on:click={() => deleteZone(z)} title="Delete Empty Zone">
+                      <i class="fa-solid fa-trash-can"></i>
+                    </button>
+                  {/if}
+                </div>
               </div>
-              <button class="icon-btn icon-btn-danger" on:click={() => deleteZone(z)} title="Delete Zone"><i class="fa-solid fa-trash-can"></i></button>
+
+              <!-- Zone Progress Bar -->
+              <div style="width:100%; height:6px; background:var(--border-color); border-radius:99px; overflow:hidden;">
+                <div style="height:100%; width:{pct}%; background:linear-gradient(90deg, var(--emerald-accent), #34d399); border-radius:99px; transition:width 0.3s ease;"></div>
+              </div>
             </div>
           {/each}
         </div>
@@ -1892,7 +2076,7 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
         {#if zoneTotalPages > 1}
           <div class="pagination-wrapper">
             <div class="pagination-info">
-              Showing <strong>{(zonePage - 1) * PAGE_SIZE + 1}</strong> - <strong>{Math.min(zonePage * PAGE_SIZE, zones.length)}</strong> of <strong>{zones.length}</strong> zones
+              Showing <strong>{(zonePage - 1) * ZONE_PAGE_SIZE + 1}</strong> - <strong>{Math.min(zonePage * ZONE_PAGE_SIZE, filteredZones.length)}</strong> of <strong>{filteredZones.length}</strong> zones
             </div>
             <div class="pagination-controls">
               <button class="pagination-btn" disabled={zonePage === 1} on:click={() => { zonePage--; }} title="Previous Page">
@@ -1965,11 +2149,16 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
                 <tr>
                   <td>#{rec.id}</td>
                   <td>
-                    <div style="display:flex; align-items:center; gap:0.4rem;">
+                    <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap;">
                       <strong>{rec.name}</strong>
                       <button class="btn-copy-inline" on:click={() => copyText(`tbl-rec-name-${rec.id}`, rec.name)} title="Copy Name">
                         {#if copiedFieldId === `tbl-rec-name-${rec.id}`}<i class="fa-solid fa-check" style="color:var(--emerald-accent)"></i>{:else}<i class="fa-regular fa-copy"></i>{/if}
                       </button>
+                      {#if rec.today_order_count > 0}
+                        <span style="font-size:0.68rem; font-weight:700; padding:0.12rem 0.45rem; border-radius:10px; background:rgba(245,158,11,0.16); color:var(--amber-accent); border:1px solid rgba(245,158,11,0.35);">
+                          <i class="fa-solid fa-triangle-exclamation"></i> {rec.today_order_count} Today
+                        </span>
+                      {/if}
                     </div>
                   </td>
                   <td>
@@ -1984,10 +2173,20 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
                   </td>
                   <td style="max-width:280px;">
                     <div style="display:flex; align-items:center; gap:0.4rem;">
-                      <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:240px; font-size:0.82rem;">{rec.address}</span>
+                      <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:210px; font-size:0.82rem;">{rec.address}</span>
                       <button class="btn-copy-inline" on:click={() => copyText(`tbl-rec-addr-${rec.id}`, rec.address)} title="Copy Address">
                         {#if copiedFieldId === `tbl-rec-addr-${rec.id}`}<i class="fa-solid fa-check" style="color:var(--emerald-accent)"></i>{:else}<i class="fa-regular fa-copy"></i>{/if}
                       </button>
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(rec.address)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="btn-copy-inline"
+                        title="Open Receiver Address in Google Maps"
+                        style="color:var(--primary-accent); text-decoration:none;"
+                      >
+                        <i class="fa-solid fa-map-location-dot"></i>
+                      </a>
                     </div>
                   </td>
                   <td>
@@ -2010,6 +2209,13 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
                   </td>
                   <td>
                     <div style="display:flex; gap:0.3rem;">
+                      <button
+                        class="icon-btn"
+                        on:click={() => copyText(`tbl-rec-full-${rec.id}`, `${rec.name}\nPhone: ${rec.phone || 'N/A'}\nAddress: ${rec.address}`)}
+                        title="Copy Full Receiver Details"
+                      >
+                        {#if copiedFieldId === `tbl-rec-full-${rec.id}`}<i class="fa-solid fa-check" style="color:var(--emerald-accent)"></i>{:else}<i class="fa-solid fa-clipboard"></i>{/if}
+                      </button>
                       <button class="icon-btn" on:click={() => openEditRec(rec)} title="Edit"><i class="fa-solid fa-pen-to-square"></i></button>
                       <button class="icon-btn icon-btn-danger" on:click={() => deleteRec(rec)} title="Delete"><i class="fa-solid fa-trash-can"></i></button>
                     </div>
@@ -2338,6 +2544,8 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
             <div style="font-size:0.75rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:0.25rem;">Order Status</div>
             {#if selectedHistoryItem.status === 'Ordered'}
               <span class="badge" style="background:rgba(16,185,129,0.15); color:var(--emerald-accent); font-weight:700; border:1px solid rgba(16,185,129,0.3); padding:0.3rem 0.65rem; border-radius:20px; font-size:0.8rem;"><i class="fa-solid fa-circle-check"></i> Ordered</span>
+            {:else if selectedHistoryItem.status === 'Cancelled'}
+              <span class="badge" style="background:rgba(239,68,68,0.12); color:#ef4444; font-weight:700; border:1px solid rgba(239,68,68,0.3); padding:0.3rem 0.65rem; border-radius:20px; font-size:0.8rem;"><i class="fa-solid fa-ban"></i> Cancelled</span>
             {:else}
               <span class="badge" style="background:rgba(245,158,11,0.15); color:var(--amber-accent); font-weight:700; border:1px solid rgba(245,158,11,0.3); padding:0.3rem 0.65rem; border-radius:20px; font-size:0.8rem;"><i class="fa-solid fa-hourglass-half"></i> Pending</span>
             {/if}
@@ -2463,6 +2671,34 @@ ${item.zomato_url ? `🔗 ZOMATO: ${item.zomato_url}` : ''}`.trim();
     </div>
   </div>
 {/if}
+
+<!-- ADMIN MOBILE BOTTOM BAR -->
+<nav class="mobile-bottom-nav">
+  <a href="/" class="bottom-nav-item" title="Back to Main Tracker">
+    <div class="nav-icon-box"><i class="fa-solid fa-house"></i></div>
+    <span class="nav-label">Tracker</span>
+  </a>
+
+  <button type="button" class="bottom-nav-item {activeTab === 'suggestions' ? 'active' : ''}" on:click={() => selectAdminTab('suggestions')} title="Smart Suggestions">
+    <div class="nav-icon-box"><i class="fa-solid fa-lightbulb"></i></div>
+    <span class="nav-label">Suggestions</span>
+  </button>
+
+  <button type="button" class="bottom-nav-item {activeTab === 'restaurants' ? 'active' : ''}" on:click={() => selectAdminTab('restaurants')} title="Restaurants">
+    <div class="nav-icon-box"><i class="fa-solid fa-store"></i></div>
+    <span class="nav-label">Restaurants</span>
+  </button>
+
+  <button type="button" class="bottom-nav-item {activeTab === 'history' ? 'active' : ''}" on:click={() => selectAdminTab('history')} title="Order History">
+    <div class="nav-icon-box"><i class="fa-solid fa-clock-rotate-left"></i></div>
+    <span class="nav-label">History</span>
+  </button>
+
+  <button type="button" class="bottom-nav-item {activeTab === 'overview' ? 'active' : ''}" on:click={() => selectAdminTab('overview')} title="Overview Hub">
+    <div class="nav-icon-box"><i class="fa-solid fa-gauge-high"></i></div>
+    <span class="nav-label">Hub</span>
+  </button>
+</nav>
 
 {#if toastVisible}
   <div class="toast">

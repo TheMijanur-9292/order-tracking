@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import * as xlsx from 'xlsx';
-import { query, invalidateCache, verifySession } from '$lib/server/db.js';
+import { query, invalidateCache, verifySession, serverError } from '$lib/server/db.js';
+import { broadcastLiveUpdate } from '$lib/server/liveUpdates.js';
 
 export async function POST({ request, cookies }) {
   const sessionToken = cookies.get('zomswi_admin_session');
@@ -29,10 +30,6 @@ export async function POST({ request, cookies }) {
       }
     }
 
-    if (!zone_id) {
-      return json({ success: false, error: 'Please select or enter a Zone' }, { status: 400 });
-    }
-
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     const workbook = xlsx.read(buffer, { type: 'buffer' });
@@ -44,13 +41,44 @@ export async function POST({ request, cookies }) {
       return json({ success: false, error: 'Excel file is empty' }, { status: 400 });
     }
 
+    // Cache zone name -> id lookups for multi-zone sheets
+    const zoneCache = new Map();
+    const allZones = await query('SELECT id, name FROM zones');
+    for (const z of allZones) {
+      zoneCache.set(z.name.trim().toLowerCase(), z.id);
+    }
+
+    // Existing (zone, name) pairs so re-uploading the same sheet does not create duplicates
+    const existingRests = await query('SELECT zone_id, name FROM restaurants');
+    const seenKeys = new Set(existingRests.map(r => `${r.zone_id}|${String(r.name).trim().toLowerCase()}`));
+    let skippedDuplicates = 0;
+
     const parsedRows = [];
     for (const row of rows) {
       const keys = Object.keys(row);
-      const nameKey = keys.find(k => /restaurant|name|hotel/i.test(k)) || keys[0];
+      const zoneKey = keys.find(k => /zone\s*name|^zone$/i.test(k));
+      const nameKey =
+        keys.find(k => /rest\s*name|restaurant|outlet|hotel/i.test(k) && k !== zoneKey) ||
+        keys.find(k => /name/i.test(k) && k !== zoneKey) ||
+        keys[0];
       const name = String(row[nameKey] || '').trim();
 
       if (!name) continue;
+
+      let rowZoneId = zone_id;
+      if (!rowZoneId && zoneKey && String(row[zoneKey] || '').trim()) {
+        const zName = String(row[zoneKey]).trim();
+        const zLower = zName.toLowerCase();
+        if (zoneCache.has(zLower)) {
+          rowZoneId = zoneCache.get(zLower);
+        } else {
+          const added = await query('INSERT INTO zones (name, description) VALUES (?, ?)', [zName, 'Imported from Sheet']);
+          rowZoneId = added[0]?.id;
+          zoneCache.set(zLower, rowZoneId);
+        }
+      }
+
+      if (!rowZoneId) continue;
 
       const platformKey = keys.find(k => /platform|app|source/i.test(k));
       let platform = platformKey ? String(row[platformKey]).trim() : 'Both';
@@ -60,7 +88,7 @@ export async function POST({ request, cookies }) {
       else platform = 'Both';
 
       const distanceKey = keys.find(k => /distance|km|range/i.test(k));
-      const distance = distanceKey ? String(row[distanceKey]).trim() : '2-3 km';
+      const distance = distanceKey ? String(row[distanceKey]).trim() : 'A. 0-1';
 
       const addressKey = keys.find(k => /address|location|receiver/i.test(k));
       const address = addressKey ? String(row[addressKey]).trim() : '';
@@ -71,11 +99,28 @@ export async function POST({ request, cookies }) {
       const zomatoKey = keys.find(k => /zomato_url|zomato link/i.test(k));
       const zomato_url = zomatoKey ? String(row[zomatoKey]).trim() : '';
 
-      parsedRows.push([zone_id, name, platform, distance, address, swiggy_url, zomato_url]);
+      const dupKey = `${rowZoneId}|${name.toLowerCase()}`;
+      if (seenKeys.has(dupKey)) {
+        skippedDuplicates++;
+        continue;
+      }
+      seenKeys.add(dupKey);
+
+      parsedRows.push([rowZoneId, name, platform, distance, address, swiggy_url, zomato_url]);
     }
 
     if (parsedRows.length === 0) {
-      return json({ success: false, error: 'No valid restaurant rows found in file' }, { status: 400 });
+      if (skippedDuplicates > 0) {
+        invalidateCache();
+        broadcastLiveUpdate();
+        return json({
+          success: true,
+          message: `No new restaurants: all ${skippedDuplicates} rows already exist.`,
+          count: 0,
+          skipped: skippedDuplicates
+        });
+      }
+      return json({ success: false, error: 'No valid restaurant rows or zones found in file' }, { status: 400 });
     }
 
     // High-performance batch insertion in chunks of 50
@@ -92,13 +137,16 @@ export async function POST({ request, cookies }) {
     }
 
     invalidateCache();
+    broadcastLiveUpdate();
 
+    const skippedNote = skippedDuplicates > 0 ? ` (${skippedDuplicates} duplicates skipped)` : '';
     return json({
       success: true,
-      message: `Successfully imported ${parsedRows.length} extra restaurants into zone!`,
-      count: parsedRows.length
+      message: `Successfully imported ${parsedRows.length} extra restaurants into zone!${skippedNote}`,
+      count: parsedRows.length,
+      skipped: skippedDuplicates
     });
   } catch (err) {
-    return json({ success: false, error: err.message }, { status: 500 });
+    return serverError(err, '/api/upload-excel');
   }
 }

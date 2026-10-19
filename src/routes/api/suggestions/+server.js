@@ -1,18 +1,15 @@
 import { json } from '@sveltejs/kit';
-import { query } from '$lib/server/db.js';
+import { query, serverError, getKolkataMonthYear, isAdminRequest } from '$lib/server/db.js';
 
-function getCurrentMonthYear() {
-  const d = new Date();
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  return `${year}-${month}`;
-}
+export async function GET({ url, cookies }) {
+  if (!isAdminRequest(cookies)) {
+    return json({ success: false, error: 'Unauthorized. Please login as Admin.' }, { status: 401 });
+  }
 
-export async function GET({ url }) {
   try {
     const zoneId = url.searchParams.get('zone_id') || 'all';
     const distance = url.searchParams.get('distance') || 'all';
-    const targetMonth = url.searchParams.get('month_year') || getCurrentMonthYear();
+    const targetMonth = url.searchParams.get('month_year') || getKolkataMonthYear();
     const strategy = url.searchParams.get('strategy') || 'all'; // 'all', 'proven', 'fresh', 'last_month'
     const timeSlot = url.searchParams.get('time_slot') || 'all';
     const platform = url.searchParams.get('platform') || 'all';
@@ -34,7 +31,7 @@ export async function GET({ url }) {
         z.name AS zone_name
       FROM restaurants r
       JOIN zones z ON r.zone_id = z.id
-      WHERE 1=1
+      WHERE COALESCE(z.is_visible, true) = true
     `;
     const restParams = [];
 
@@ -55,8 +52,8 @@ export async function GET({ url }) {
 
     if (search) {
       const qPattern = `%${search}%`;
-      restSql += ` AND (r.name LIKE ? OR r.address LIKE ?)`;
-      restParams.push(qPattern, qPattern);
+      restSql += ` AND (LOWER(r.name) LIKE LOWER(?) OR LOWER(COALESCE(r.address, '')) LIKE LOWER(?) OR LOWER(z.name) LIKE LOWER(?))`;
+      restParams.push(qPattern, qPattern, qPattern);
     }
 
     restSql += ` ORDER BY r.name ASC`;
@@ -296,6 +293,6 @@ export async function GET({ url }) {
     });
   } catch (err) {
     console.error('Error in /api/suggestions:', err);
-    return json({ success: false, error: err.message }, { status: 500 });
+    return serverError(err, '/api/suggestions');
   }
 }

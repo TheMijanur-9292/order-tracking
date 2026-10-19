@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { query, getCachedData, setCachedData, invalidateCache, verifySession } from '$lib/server/db.js';
+import { query, getCachedData, setCachedData, invalidateCache, verifySession, serverError } from '$lib/server/db.js';
 
 export async function GET() {
   try {
@@ -13,7 +13,7 @@ export async function GET() {
     setCachedData('time_slots', resPayload, 60000);
     return json(resPayload, { headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' } });
   } catch (err) {
-    return json({ success: false, error: err.message }, { status: 500 });
+    return serverError(err, '/api/time-slots');
   }
 }
 
@@ -46,6 +46,6 @@ export async function POST({ request, cookies }) {
 
     return json({ success: true, id: result[0]?.id });
   } catch (err) {
-    return json({ success: false, error: err.message }, { status: 500 });
+    return serverError(err, '/api/time-slots');
   }
 }

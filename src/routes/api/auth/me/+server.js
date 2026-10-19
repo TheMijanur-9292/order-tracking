@@ -1,34 +1,21 @@
 import { json } from '@sveltejs/kit';
-import { verifySession, createSignedSession } from '$lib/server/db.js';
+import { verifySession, createSignedSession, sessionCookieOptions, SESSION_COOKIE } from '$lib/server/db.js';
 
 export async function GET({ cookies }) {
-  const sessionToken = cookies.get('zomswi_admin_session');
+  const payload = verifySession(cookies.get(SESSION_COOKIE));
 
-  if (!sessionToken) {
+  if (!payload) {
+    if (cookies.get(SESSION_COOKIE)) {
+      cookies.delete(SESSION_COOKIE, { path: '/' });
+    }
     return json({ authenticated: false });
   }
 
-  try {
-    const payload = verifySession(sessionToken);
-    if (payload && payload.email) {
-      // Re-sign/extend session cookie with new HMAC signature
-      const newSignedToken = createSignedSession(payload);
-      cookies.set('zomswi_admin_session', newSignedToken, {
-        path: '/',
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: process.env.NODE_ENV === 'production',
-        maxAge: 60 * 60 * 24 * 365 * 10
-      });
+  // Sliding expiry: re-sign so an active admin stays logged in, an idle one expires after 30 days
+  cookies.set(SESSION_COOKIE, createSignedSession(payload), sessionCookieOptions());
 
-      return json({
-        authenticated: true,
-        user: { email: payload.email, role: payload.role || 'admin' }
-      });
-    }
-  } catch (err) {
-    // invalid token
-  }
-
-  return json({ authenticated: false });
+  return json({
+    authenticated: true,
+    user: { email: payload.email, role: payload.role || 'admin' }
+  });
 }
