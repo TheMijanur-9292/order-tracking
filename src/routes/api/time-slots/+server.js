@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { query, getCachedData, setCachedData, invalidateCache, verifySession, serverError } from '$lib/server/db.js';
+import { broadcastLiveUpdate } from '$lib/server/liveUpdates.js';
 
 export async function GET() {
   try {
@@ -42,7 +43,7 @@ export async function POST({ request, cookies }) {
       ]
     );
 
-    invalidateCache('time_slots');
+    await broadcastLiveUpdate();
 
     return json({ success: true, id: result[0]?.id });
   } catch (err) {

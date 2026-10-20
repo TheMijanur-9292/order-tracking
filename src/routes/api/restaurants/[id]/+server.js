@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { query, invalidateCache, verifySession, serverError } from '$lib/server/db.js';
+import { broadcastLiveUpdate } from '$lib/server/liveUpdates.js';
 
 export async function PUT({ params, request, cookies }) {
   const sessionToken = cookies.get('zomswi_admin_session');
@@ -18,14 +19,25 @@ export async function PUT({ params, request, cookies }) {
     }
 
     const { zone_id, name, platform, distance, address, swiggy_url, zomato_url } = await request.json();
+    if (!name || !String(name).trim()) {
+      return json({ success: false, error: 'Restaurant name is required' }, { status: 400 });
+    }
+    if (!zone_id) {
+      return json({ success: false, error: 'Zone is required' }, { status: 400 });
+    }
+    const zoneCheck = await query('SELECT id FROM zones WHERE id = ?', [zone_id]);
+    if (zoneCheck.length === 0) {
+      return json({ success: false, error: 'Selected zone does not exist' }, { status: 400 });
+    }
+
     await query(
       `UPDATE restaurants 
        SET zone_id = ?, name = ?, platform = ?, distance = ?, address = ?, swiggy_url = ?, zomato_url = ?
        WHERE id = ?`,
-      [zone_id, name, platform, distance, address, swiggy_url, zomato_url, id]
+      [zone_id, String(name).trim(), platform || 'Both', distance || 'C. 2-3', address || '', swiggy_url || '', zomato_url || '', id]
     );
 
-    invalidateCache();
+    await broadcastLiveUpdate();
 
     return json({ success: true, message: 'Restaurant updated successfully' });
   } catch (err) {
@@ -50,7 +62,7 @@ export async function DELETE({ params, cookies }) {
 
     await query('DELETE FROM restaurants WHERE id = ?', [id]);
 
-    invalidateCache();
+    await broadcastLiveUpdate();
 
     return json({ success: true, message: 'Restaurant deleted successfully' });
   } catch (err) {

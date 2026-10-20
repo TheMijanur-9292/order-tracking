@@ -155,7 +155,7 @@ export async function POST({ request, cookies }) {
 
     if (result.changed) {
       invalidateCache();
-      broadcastLiveUpdate();
+      await broadcastLiveUpdate();
     }
 
     return json({

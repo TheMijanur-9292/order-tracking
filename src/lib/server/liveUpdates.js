@@ -1,8 +1,10 @@
-import { invalidateCache } from '$lib/server/db.js';
+import { invalidateCache, bumpDataVersion } from '$lib/server/db.js';
 
 const connectedClients = new Set();
 
-export function broadcastLiveUpdate() {
+// Call (and await) after every data change: clears the local cache, notifies SSE clients on this
+// instance, and bumps the shared data version so polling clients on any instance pick it up.
+export async function broadcastLiveUpdate() {
   invalidateCache();
   for (const client of connectedClients) {
     try {
@@ -10,6 +12,11 @@ export function broadcastLiveUpdate() {
     } catch (e) {
       connectedClients.delete(client);
     }
+  }
+  try {
+    await bumpDataVersion();
+  } catch (e) {
+    console.error('Failed to bump data version:', e);
   }
 }
 

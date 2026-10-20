@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { query, invalidateCache, verifySession, serverError } from '$lib/server/db.js';
+import { broadcastLiveUpdate } from '$lib/server/liveUpdates.js';
 
 export async function PUT({ params, request, cookies }) {
   const sessionToken = cookies.get('zomswi_admin_session');
@@ -29,7 +30,7 @@ export async function PUT({ params, request, cookies }) {
       ]
     );
 
-    invalidateCache('time_slots');
+    await broadcastLiveUpdate();
     return json({ success: true });
   } catch (err) {
     return serverError(err, '/api/time-slots/[id]');
@@ -44,7 +45,7 @@ export async function DELETE({ params, cookies }) {
   try {
     const { id } = params;
     await query('DELETE FROM time_slots WHERE id = ?', [id]);
-    invalidateCache('time_slots');
+    await broadcastLiveUpdate();
     return json({ success: true });
   } catch (err) {
     return serverError(err, '/api/time-slots/[id]');

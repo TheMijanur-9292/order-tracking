@@ -12,7 +12,7 @@ export async function GET({ url, cookies }) {
     const search = (url.searchParams.get('search') || '').trim();
     const platform = url.searchParams.get('platform') || 'all';
     const status = url.searchParams.get('status') || 'all';
-    const includeHidden = url.searchParams.get('include_hidden') === 'true';
+    const includeHidden = isAdmin && url.searchParams.get('include_hidden') === 'true';
 
     const cacheKey = `rests_${monthYear}_${zone_id}_${platform}_${status}_${search.toLowerCase()}_${isAdmin ? 'adm' : 'pub'}_${includeHidden ? 'allz' : 'visz'}`;
     const cached = getCachedData(cacheKey);
@@ -73,6 +73,8 @@ export async function GET({ url, cookies }) {
     if (!isAdmin) {
       restaurants = restaurants.map(r => ({
         ...r,
+        platform_used: null,
+        notes: null,
         receiver_id: null,
         receiver_name: null,
         receiver_address: null,
@@ -106,7 +108,7 @@ export async function POST({ request, cookies }) {
     );
 
     invalidateCache();
-    broadcastLiveUpdate();
+    await broadcastLiveUpdate();
 
     return json({ success: true, id: result[0]?.id });
   } catch (err) {

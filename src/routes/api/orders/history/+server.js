@@ -85,7 +85,8 @@ export async function GET({ url, cookies }) {
     ]);
 
     // Calculate aggregated summary statistics
-    const totalOrders = history.length;
+    const totalCancelled = history.filter(item => item.status === 'Cancelled').length;
+    const totalOrders = history.length - totalCancelled;
     const totalOrdered = history.filter(item => item.status === 'Ordered').length;
     const totalPending = history.filter(item => item.status === 'Pending').length;
     
@@ -104,6 +105,7 @@ export async function GET({ url, cookies }) {
         total_orders: totalOrders,
         total_ordered: totalOrdered,
         total_pending: totalPending,
+        total_cancelled: totalCancelled,
         unique_receivers: uniqueReceivers
       },
       available_months: availableMonths,

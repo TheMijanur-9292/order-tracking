@@ -1,11 +1,11 @@
 import { json } from '@sveltejs/kit';
-import { query, getCachedData, setCachedData, invalidateCache, verifySession, serverError, getKolkataMonthYear } from '$lib/server/db.js';
+import { query, getCachedData, setCachedData, invalidateCache, verifySession, serverError, getKolkataMonthYear, isAdminRequest } from '$lib/server/db.js';
 import { broadcastLiveUpdate } from '$lib/server/liveUpdates.js';
 
-export async function GET({ url }) {
+export async function GET({ url, cookies }) {
   try {
     const monthYear = url.searchParams.get('month_year') || getKolkataMonthYear();
-    const includeHidden = url.searchParams.get('include_hidden') === 'true';
+    const includeHidden = url.searchParams.get('include_hidden') === 'true' && isAdminRequest(cookies);
     const cacheKey = `zones_${monthYear}_${includeHidden ? 'all' : 'vis'}`;
 
     const cached = getCachedData(cacheKey);
@@ -58,7 +58,7 @@ export async function POST({ request, cookies }) {
     );
 
     invalidateCache();
-    broadcastLiveUpdate();
+    await broadcastLiveUpdate();
 
     return json({ success: true, id: result[0]?.id, name: name.trim() });
   } catch (err) {
@@ -76,7 +76,7 @@ export async function PATCH({ request, cookies }) {
     const { is_visible } = await request.json();
     await query('UPDATE zones SET is_visible = ?', [Boolean(is_visible)]);
     invalidateCache();
-    broadcastLiveUpdate();
+    await broadcastLiveUpdate();
     return json({ success: true, is_visible: Boolean(is_visible) });
   } catch (err) {
     return serverError(err, '/api/zones');

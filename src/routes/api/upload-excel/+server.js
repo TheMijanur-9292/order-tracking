@@ -112,7 +112,7 @@ export async function POST({ request, cookies }) {
     if (parsedRows.length === 0) {
       if (skippedDuplicates > 0) {
         invalidateCache();
-        broadcastLiveUpdate();
+        await broadcastLiveUpdate();
         return json({
           success: true,
           message: `No new restaurants: all ${skippedDuplicates} rows already exist.`,
@@ -137,7 +137,7 @@ export async function POST({ request, cookies }) {
     }
 
     invalidateCache();
-    broadcastLiveUpdate();
+    await broadcastLiveUpdate();
 
     const skippedNote = skippedDuplicates > 0 ? ` (${skippedDuplicates} duplicates skipped)` : '';
     return json({

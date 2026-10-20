@@ -187,10 +187,24 @@
       } catch (e) {}
     }
 
-    // Fallback Background Poll every 10 seconds when tab is active
+    // Fallback Background Poll every 10 seconds when tab is active: check the cheap data version
+    // and only re-fetch the full lists when something actually changed
+    let lastDataVersion = null;
+    const checkDataVersion = async () => {
+      try {
+        const res = await fetch('/api/version', { cache: 'no-store' });
+        const data = await res.json();
+        if (!data.success) return;
+        if (lastDataVersion !== null && data.version !== lastDataVersion) {
+          silentRefresh();
+        }
+        lastDataVersion = data.version;
+      } catch (e) {}
+    };
+    checkDataVersion();
     const pollInterval = setInterval(() => {
       if (document.visibilityState === 'visible' && !isLoadingData) {
-        silentRefresh();
+        checkDataVersion();
       }
     }, 10000);
 

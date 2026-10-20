@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { query, getCachedData, setCachedData, invalidateCache, verifySession, serverError, isAdminRequest, getKolkataDateString } from '$lib/server/db.js';
+import { broadcastLiveUpdate } from '$lib/server/liveUpdates.js';
 
 function maskPhone(phone) {
   if (!phone) return '';
@@ -123,7 +124,7 @@ export async function POST({ request, cookies }) {
       [name.trim(), address.trim(), (phone || '').trim()]
     );
 
-    invalidateCache('receivers');
+    await broadcastLiveUpdate();
 
     return json({ success: true, id: res[0]?.id, message: 'Receiver added successfully' });
   } catch (err) {

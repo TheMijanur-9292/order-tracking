@@ -300,6 +300,21 @@ async function executeDbInit() {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS app_meta (
+          id SERIAL PRIMARY KEY,
+          meta_key VARCHAR(100) NOT NULL UNIQUE,
+          meta_value TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS login_attempts (
+          id SERIAL PRIMARY KEY,
+          attempt_key VARCHAR(400) NOT NULL UNIQUE,
+          fail_count INTEGER NOT NULL DEFAULT 0,
+          first_failed_at BIGINT NOT NULL
+        );
+
+        INSERT INTO app_meta (meta_key, meta_value) VALUES ('data_version', '0') ON CONFLICT (meta_key) DO NOTHING;
+
         CREATE INDEX IF NOT EXISTS idx_restaurants_zone ON restaurants(zone_id);
         CREATE INDEX IF NOT EXISTS idx_restaurants_zone_dist ON restaurants(zone_id, distance);
         CREATE INDEX IF NOT EXISTS idx_restaurants_platform ON restaurants(platform);
@@ -446,6 +461,21 @@ async function executeDbInit() {
         role TEXT DEFAULT 'admin',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS app_meta (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        meta_key TEXT NOT NULL UNIQUE,
+        meta_value TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS login_attempts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        attempt_key TEXT NOT NULL UNIQUE,
+        fail_count INTEGER NOT NULL DEFAULT 0,
+        first_failed_at INTEGER NOT NULL
+      );
+
+      INSERT INTO app_meta (meta_key, meta_value) VALUES ('data_version', '0') ON CONFLICT (meta_key) DO NOTHING;
 
       CREATE TABLE IF NOT EXISTS order_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -605,4 +635,41 @@ export async function transaction(fn) {
       throw err;
     }
   }
+}
+
+// ---------- Data version (cheap change detection for polling clients) ----------
+export async function bumpDataVersion() {
+  await query("UPDATE app_meta SET meta_value = ? WHERE meta_key = 'data_version'", [String(Date.now())]);
+}
+
+export async function getDataVersion() {
+  const rows = await query("SELECT meta_value FROM app_meta WHERE meta_key = 'data_version'");
+  return rows[0]?.meta_value || '0';
+}
+
+// ---------- Login attempt tracking (stored in the DB so all serverless instances share it) ----------
+const MAX_FAILED_LOGINS = 5;
+const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+
+export async function isLoginLockedOut(key) {
+  const rows = await query('SELECT fail_count, first_failed_at FROM login_attempts WHERE attempt_key = ?', [key]);
+  if (rows.length === 0) return false;
+  if (Date.now() - Number(rows[0].first_failed_at) > LOGIN_LOCKOUT_MS) return false;
+  return Number(rows[0].fail_count) >= MAX_FAILED_LOGINS;
+}
+
+export async function recordLoginFailure(key) {
+  const now = Date.now();
+  const rows = await query('SELECT first_failed_at FROM login_attempts WHERE attempt_key = ?', [key]);
+  if (rows.length === 0) {
+    await query('INSERT INTO login_attempts (attempt_key, fail_count, first_failed_at) VALUES (?, 1, ?)', [key, now]);
+  } else if (now - Number(rows[0].first_failed_at) > LOGIN_LOCKOUT_MS) {
+    await query('UPDATE login_attempts SET fail_count = 1, first_failed_at = ? WHERE attempt_key = ?', [now, key]);
+  } else {
+    await query('UPDATE login_attempts SET fail_count = fail_count + 1 WHERE attempt_key = ?', [key]);
+  }
+}
+
+export async function clearLoginFailures(key) {
+  await query('DELETE FROM login_attempts WHERE attempt_key = ?', [key]);
 }

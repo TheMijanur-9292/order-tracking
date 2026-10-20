@@ -14,7 +14,7 @@ export async function PATCH({ params, request, cookies }) {
     const isVisible = Boolean(body.is_visible);
     await query('UPDATE zones SET is_visible = ? WHERE id = ?', [isVisible, id]);
     invalidateCache();
-    broadcastLiveUpdate();
+    await broadcastLiveUpdate();
     return json({ success: true, id: Number(id), is_visible: isVisible });
   } catch (err) {
     return serverError(err, '/api/zones/[id]');
@@ -43,7 +43,7 @@ export async function DELETE({ params, cookies }) {
 
     await query('DELETE FROM zones WHERE id = ?', [id]);
     invalidateCache();
-    broadcastLiveUpdate();
+    await broadcastLiveUpdate();
     return json({ success: true, message: 'Zone deleted successfully' });
   } catch (err) {
     return serverError(err, '/api/zones/[id]');
