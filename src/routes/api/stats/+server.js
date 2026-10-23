@@ -8,7 +8,7 @@ export async function GET({ url }) {
 
     const cached = getCachedData(cacheKey);
     if (cached) {
-      return json(cached, { headers: { 'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=60' } });
+      return json(cached, { headers: { 'Cache-Control': 'no-store' } });
     }
 
     const [zoneCount, restaurantCount, orderedCount] = await Promise.all([
@@ -31,7 +31,7 @@ export async function GET({ url }) {
     };
 
     setCachedData(cacheKey, resPayload, 15000);
-    return json(resPayload, { headers: { 'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=60' } });
+    return json(resPayload, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     return serverError(err, '/api/stats');
   }

@@ -6,5 +6,14 @@ export default defineConfig({
   server: {
     port: 3048,
     strictPort: true
+  },
+  test: {
+    include: ['src/**/*.test.js'],
+    env: {
+      // Tests never touch a real database
+      DATABASE_URL: '',
+      SESSION_SECRET: 'test-session-secret',
+      AUTH_SALT: 'test-auth-salt'
+    }
   }
 });

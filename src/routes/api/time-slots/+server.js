@@ -6,13 +6,13 @@ export async function GET() {
   try {
     const cached = getCachedData('time_slots');
     if (cached) {
-      return json(cached, { headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' } });
+      return json(cached, { headers: { 'Cache-Control': 'no-store' } });
     }
 
     const slots = await query('SELECT * FROM time_slots ORDER BY display_order ASC, id ASC');
     const resPayload = { success: true, time_slots: slots };
     setCachedData('time_slots', resPayload, 60000);
-    return json(resPayload, { headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' } });
+    return json(resPayload, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     return serverError(err, '/api/time-slots');
   }

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite dev --port 3058 --host",
     "build": "vite build",
-    "preview": "vite preview --port 3058"
+    "preview": "vite preview --port 3058",
+    "test": "vitest run"
   },
   "dependencies": {
     "@sveltejs/adapter-vercel": "^5.4.3",
@@ -14,12 +15,13 @@
     "pg": "^8.12.0",
     "sqlite": "^5.1.1",
     "sqlite3": "^5.1.7",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@sveltejs/kit": "^2.5.27",
     "@sveltejs/vite-plugin-svelte": "^3.1.2",
     "svelte": "^4.2.19",
-    "vite": "^5.4.6"
+    "vite": "^5.4.6",
+    "vitest": "^2.1.9"
   }
 }

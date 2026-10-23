@@ -1,6 +1,8 @@
 <script>
   import { onMount } from 'svelte';
   import { userStore, isAdmin, isLoginModalOpen, logoutUser } from '$lib/authStore.js';
+  import { setDocumentTheme, getSavedTheme, saveTheme, getNextTheme } from '$lib/utils/theme.js';
+  import { maskPhoneNumber } from '$lib/utils/phone.js';
 
   let receiversData = [];
   let searchQuery = '';
@@ -38,20 +40,18 @@
 
   function applyTheme(theme) {
     currentTheme = theme;
-    if (typeof document !== 'undefined') {
-      document.documentElement.setAttribute('data-theme', theme);
-    }
+    setDocumentTheme(theme);
   }
 
   function toggleTheme() {
-    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+    const newTheme = getNextTheme(currentTheme);
     applyTheme(newTheme);
-    localStorage.setItem('theme', newTheme);
+    saveTheme(newTheme);
     showToast(`Switched to ${newTheme.toUpperCase()} mode`);
   }
 
   onMount(() => {
-    const savedTheme = localStorage.getItem('theme') || 'light';
+    const savedTheme = getSavedTheme();
     applyTheme(savedTheme);
     fetchReceivers();
   });
@@ -80,21 +80,6 @@
       (rec.phone || '').toLowerCase().includes(q)
     );
   });
-
-  function maskPhoneNumber(p) {
-    if (!p) return '';
-    const str = String(p).trim();
-    if (str.startsWith('+91-')) {
-      const rest = str.substring(4);
-      if (rest.length >= 2) return `+91-${rest.slice(0, 2)}xxxxxx`;
-    } else if (str.startsWith('+91')) {
-      const rest = str.substring(3);
-      if (rest.length >= 2) return `+91-${rest.slice(0, 2)}xxxxxx`;
-    } else if (str.length >= 2) {
-      return `${str.slice(0, 2)}xxxxxx`;
-    }
-    return 'xxxxxx';
-  }
 
   function copyText(fieldKey, text) {
     if (!text) return;
@@ -129,8 +114,8 @@
       return;
     }
     editId = rec.id;
-    name = rec.name;
-    address = rec.address;
+    name = rec.name || '';
+    address = rec.address || '';
     phone = rec.phone || '';
     showAddEditModal = true;
   }
@@ -141,8 +126,8 @@
       showToast('Admin login required to save receivers!', 'error');
       return;
     }
-    if (!name.trim()) return showToast('Receiver name is required', 'error');
-    if (!address.trim()) return showToast('Receiver address is required', 'error');
+    if (!(name || '').trim()) return showToast('Receiver name is required', 'error');
+    if (!(address || '').trim()) return showToast('Receiver address is required', 'error');
 
     try {
       const url = editId ? `/api/receivers/${editId}` : '/api/receivers';
@@ -411,7 +396,7 @@
 <!-- TOAST NOTIFICATION -->
 {#if toastVisible}
   <div class="toast">
-    <i class={toastType === 'success' ? 'fa-solid fa-circle-check' : 'fa-solid fa-triangle-exclamation'} style="color:var(--emerald-accent)"></i>
+    <i class={toastType === 'success' ? 'fa-solid fa-circle-check' : 'fa-solid fa-triangle-exclamation'} style="color:{toastType === 'success' ? 'var(--emerald-accent)' : 'var(--danger-accent)'}"></i>
     <span>{toastMessage}</span>
   </div>
 {/if}

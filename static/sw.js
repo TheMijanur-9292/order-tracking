@@ -1,13 +1,7 @@
-const CACHE_NAME = 'zomswi-tracker-v1';
-const ASSETS_TO_CACHE = [
-  '/',
-  '/manifest.json'
-];
+// Bump this name whenever the caching strategy changes; old caches are deleted on activate.
+const CACHE_NAME = 'zomswi-tracker-v2';
 
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS_TO_CACHE))
-  );
+self.addEventListener('install', () => {
   self.skipWaiting();
 });
 
@@ -21,21 +15,44 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET' || event.request.url.includes('/api/')) {
+  const request = event.request;
+  if (request.method !== 'GET') return;
+
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return;
+
+  // Pages: always try the network first so a new deploy is picked up immediately;
+  // fall back to the last cached copy only when offline.
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match(request).then((cached) => cached || caches.match('/')))
+    );
     return;
   }
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        // Fetch fresh copy in background
-        fetch(event.request).then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse));
-          }
-        }).catch(() => {});
-        return cachedResponse;
-      }
-      return fetch(event.request);
-    })
-  );
+
+  // Build assets have content hashes in their names and never change, so cache-first is safe.
+  if (url.pathname.startsWith('/_app/immutable/')) {
+    event.respondWith(
+      caches.match(request).then(
+        (cached) =>
+          cached ||
+          fetch(request).then((response) => {
+            if (response.ok) {
+              const copy = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+            }
+            return response;
+          })
+      )
+    );
+  }
+  // Everything else (icons, manifest, ...) goes straight to the network.
 });

@@ -64,3 +64,23 @@ Access in your browser at:
 
 ### Deploying
 The app uses `@sveltejs/adapter-vercel`. Set `DATABASE_URL`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `SESSION_SECRET` in the Vercel project's environment variables.
+
+---
+
+## 👤 Admin Accounts
+
+`ADMIN_EMAIL` / `ADMIN_PASSWORD` only create the **first** admin, when the `users` table is empty — changing them later has no effect, and an admin removed from the UI does not come back.
+After that, manage accounts from **Admin → Account & Admins**:
+
+- change your own password (all other logged-in sessions for that account are signed out)
+- add or remove other admins (a removed admin is signed out on their next request)
+
+---
+
+## 🧪 Tests
+
+```bash
+npm test
+```
+
+Unit tests cover the order-suggestion logic, password/session handling, IST date helpers and phone/address masking. They never touch a database.

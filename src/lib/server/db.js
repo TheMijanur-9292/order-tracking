@@ -276,7 +276,7 @@ async function executeDbInit() {
         CREATE TABLE IF NOT EXISTS order_history (
           id SERIAL PRIMARY KEY,
           order_id INTEGER,
-          restaurant_id INTEGER REFERENCES restaurants(id) ON DELETE CASCADE,
+          restaurant_id INTEGER REFERENCES restaurants(id) ON DELETE SET NULL,
           restaurant_name VARCHAR(255),
           zone_name VARCHAR(255),
           month_year VARCHAR(50) NOT NULL,
@@ -324,6 +324,22 @@ async function executeDbInit() {
         CREATE INDEX IF NOT EXISTS idx_order_history_month ON order_history(month_year);
         CREATE INDEX IF NOT EXISTS idx_order_history_rest_month ON order_history(restaurant_id, month_year);
         CREATE INDEX IF NOT EXISTS idx_order_history_receiver ON order_history(receiver_id);
+
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at BIGINT;
+
+        -- Deleting a restaurant must keep its order history (restaurant_name / zone_name are stored
+        -- on each row), so migrate the old ON DELETE CASCADE foreign key to SET NULL once.
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'order_history_restaurant_id_fkey' AND confdeltype = 'c'
+          ) THEN
+            ALTER TABLE order_history DROP CONSTRAINT order_history_restaurant_id_fkey;
+            ALTER TABLE order_history ADD CONSTRAINT order_history_restaurant_id_fkey
+              FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE SET NULL;
+          END IF;
+        END $$;
       `);
 
       // Auto-seed admin user from environment variables (ADMIN_EMAIL & ADMIN_PASSWORD)
@@ -331,7 +347,9 @@ async function executeDbInit() {
       const adminPassword = process.env.ADMIN_PASSWORD;
 
       if (adminEmail && adminPassword) {
-        const userCheck = await client.query('SELECT * FROM users WHERE email = $1', [adminEmail]);
+        // Only bootstrap the first admin; later admins are managed from the Account tab, so a removed
+        // env admin must not come back on the next cold start
+        const userCheck = await client.query('SELECT id FROM users LIMIT 1');
         if (userCheck.rows.length === 0) {
           const hash = hashPassword(adminPassword);
           await client.query('INSERT INTO users (email, password_hash, role) VALUES ($1, $2, $3)', [adminEmail, hash, 'admin']);
@@ -494,7 +512,7 @@ async function executeDbInit() {
         notes TEXT,
         ordered_at DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE CASCADE
+        FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE SET NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_restaurants_zone ON restaurants(zone_id);
@@ -529,6 +547,9 @@ async function executeDbInit() {
     try {
       await sqliteDb.exec(`ALTER TABLE orders ADD COLUMN time_slot TEXT;`);
     } catch (e) {}
+    try {
+      await sqliteDb.exec(`ALTER TABLE users ADD COLUMN password_changed_at INTEGER;`);
+    } catch (e) {}
 
     // Auto-seed default 5 time slots in SQLite
     const slotsCount = await sqliteDb.get('SELECT COUNT(*) as count FROM time_slots');
@@ -548,7 +569,8 @@ async function executeDbInit() {
     const adminPassword = process.env.ADMIN_PASSWORD;
 
     if (adminEmail && adminPassword) {
-      const userCheck = await sqliteDb.get('SELECT * FROM users WHERE email = ?', [adminEmail]);
+      // Only bootstrap the first admin (see the Postgres branch above)
+      const userCheck = await sqliteDb.get('SELECT id FROM users LIMIT 1');
       if (!userCheck) {
         const hash = hashPassword(adminPassword);
         await sqliteDb.run('INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)', [adminEmail, hash, 'admin']);

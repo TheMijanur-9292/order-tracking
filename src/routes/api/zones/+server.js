@@ -10,7 +10,7 @@ export async function GET({ url, cookies }) {
 
     const cached = getCachedData(cacheKey);
     if (cached) {
-      return json(cached, { headers: { 'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=120' } });
+      return json(cached, { headers: { 'Cache-Control': 'no-store' } });
     }
 
     const whereClause = includeHidden ? '' : 'WHERE COALESCE(z.is_visible, true) = true';
@@ -35,7 +35,7 @@ export async function GET({ url, cookies }) {
 
     const resPayload = { success: true, zones };
     setCachedData(cacheKey, resPayload, 30000);
-    return json(resPayload, { headers: { 'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=120' } });
+    return json(resPayload, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     return serverError(err, '/api/zones');
   }

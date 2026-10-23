@@ -1,23 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { query, getCachedData, setCachedData, invalidateCache, verifySession, serverError, isAdminRequest, getKolkataDateString } from '$lib/server/db.js';
 import { broadcastLiveUpdate } from '$lib/server/liveUpdates.js';
-
-function maskPhone(phone) {
-  if (!phone) return '';
-  const digits = String(phone).replace(/\D/g, '');
-  const local = digits.length > 10 ? digits.slice(-10) : digits;
-  return local.length >= 2 ? `+91-${local.slice(0, 2)}xxxxxxxx` : '';
-}
-
-// Public viewers only see the locality (last few parts, minus state/country), never house/room details
-function areaOnly(address) {
-  if (!address) return '';
-  const parts = String(address)
-    .split(',')
-    .map(p => p.trim())
-    .filter(p => p && !/^(india|west bengal)$/i.test(p) && !/\d/.test(p));
-  return parts.slice(-3).join(', ');
-}
+import { maskPhone, areaOnly } from '$lib/server/privacy.js';
 
 export async function GET({ url, cookies }) {
   try {
